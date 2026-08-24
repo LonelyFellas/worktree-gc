@@ -8,6 +8,9 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/darwish/worktree-gc"
 keywords = ["git", "worktree", "disk", "cleanup", "agent"]
 categories = ["command-line-utilities", "development-tools"]
+# gui/ 是独立的 Tauri crate，不属于本包。不排除的话 cargo 会把 src-tauri 的源文件
+# 算进来，而它们依赖 tauri——一个 CLI 不该为了 GUI 去编译整套 webview 工具链。
+exclude = ["gui"]
 
 [[bin]]
 name = "wtgc"
