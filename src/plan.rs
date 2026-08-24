@@ -25,12 +25,20 @@ pub struct Selection {
 impl Selection {
     /// 选中所有判定允许的项。这是 `--yes` 的语义，**不是默认行为**——
     /// 默认是什么都不选，只报告。
-    pub fn everything_allowed(report: &ScanReport) -> Self {
+    ///
+    /// `include_main` 决定要不要连主工作区的构建缓存一起选上，**默认不选**。
+    /// 主工作区是人天天在用的那个，它的缓存命中率最高、重建代价也最实在
+    /// （实测一个 378 个依赖的 Rust 项目冷编译要 5–15 分钟），
+    /// 不该和 agent 用完即弃的 worktree 同等对待。要清得显式说。
+    pub fn everything_allowed(report: &ScanReport, include_main: bool) -> Self {
         let mut sel = Selection { prune: true, ..Default::default() };
         for repo in &report.repos {
             for wt in &repo.worktrees {
                 if matches!(wt.verdict, Verdict::Removable) {
                     sel.remove.insert(wt.path.clone());
+                }
+                if wt.is_main && !include_main {
+                    continue;
                 }
                 for c in &wt.caches {
                     if c.outcomes.iter().all(|o| o.status.is_pass()) {

@@ -94,7 +94,7 @@ fn everything_allowed_never_picks_up_blocked_items() {
         wt("/repo/ok", Verdict::Removable, fingerprint(0, vec![])),
         wt("/repo/bad", Verdict::Blocked { by: vec![GateId::Precious] }, fingerprint(0, vec![])),
     ]);
-    let sel = Selection::everything_allowed(&r);
+    let sel = Selection::everything_allowed(&r, true);
     assert!(sel.remove.contains(&PathBuf::from("/repo/ok")));
     assert!(!sel.remove.contains(&PathBuf::from("/repo/bad")), "--yes 也不该碰被拦下的");
 }
@@ -248,4 +248,108 @@ fn every_removal_carries_a_restore_hint() {
     let hint = out.results[0].restore_hint.as_deref().unwrap_or_default();
     assert!(hint.contains("worktree add"), "应给出可直接执行的重建命令，实际: {hint}");
     assert!(hint.contains("abc123"), "应带上具体的 commit");
+}
+
+// ───────────────────────── 两种动作的复检范围不同 ─────────────────────────
+
+#[test]
+fn source_edits_do_not_block_cache_reclamation() {
+    // A 组门禁刻意不含 Dirty：未提交的源码改动威胁不到 gitignore 的构建产物。
+    // 复检若把这条一视同仁地套在回收上，就会因为无关的源码编辑白白少清几十 GB。
+    let tmp = tempfile::tempdir().expect("临时目录");
+    let wt_dir = tmp.path().join("wt");
+    let cache = wt_dir.join("target");
+    std::fs::create_dir_all(&cache).expect("建 target");
+
+    let p = wtgc::plan::Plan {
+        actions: vec![Action::ReclaimCache {
+            worktree: wt_dir.clone(),
+            cache: cache.clone(),
+            kind: CacheKind { name: "target".into(), ecosystem: "rust".into() },
+            bytes: 100,
+            expect: fingerprint(0, vec![]),
+        }],
+        rejected: Vec::new(),
+    };
+
+    // status 现在报 2 处改动，而指纹记的是 0
+    let mut git = RecordingGit::new();
+    git.stdout = b" M src/a.rs\0 M src/b.rs\0".to_vec();
+    let fs = SpyFs::new();
+    let env = env_with(git, vec![]);
+    let out = apply(&p, &ApplyOptions { dry_run: false, audit_log: None }, &env, &fs);
+
+    assert!(
+        matches!(out.results[0].outcome, Outcome::Done { .. }),
+        "源码改动不该挡住缓存回收，实际 {:?}",
+        out.results[0].outcome
+    );
+    assert_eq!(fs.removals(), vec![cache], "该回收的缓存必须真的被回收");
+}
+
+#[test]
+fn a_busy_worktree_still_blocks_cache_reclamation() {
+    // 放宽 dirty 之后，busy 就是回收路径上唯一承重的复检——它必须仍然有效
+    let tmp = tempfile::tempdir().expect("临时目录");
+    let wt_dir = tmp.path().join("wt");
+    let cache = wt_dir.join("target");
+    std::fs::create_dir_all(&cache).expect("建 target");
+
+    let p = wtgc::plan::Plan {
+        actions: vec![Action::ReclaimCache {
+            worktree: wt_dir,
+            cache,
+            kind: CacheKind { name: "target".into(), ecosystem: "rust".into() },
+            bytes: 100,
+            expect: fingerprint(0, vec![]),
+        }],
+        rejected: Vec::new(),
+    };
+
+    let fs = SpyFs::new();
+    let env = env_with(RecordingGit::new(), vec![ProcInfo { pid: 42, name: "cargo".into() }]);
+    let out = apply(&p, &ApplyOptions { dry_run: false, audit_log: None }, &env, &fs);
+
+    assert!(
+        matches!(out.results[0].outcome, Outcome::Stale { .. }),
+        "有进程在用时绝不能回收（会中断构建），实际 {:?}",
+        out.results[0].outcome
+    );
+    assert!(fs.removals().is_empty(), "一次删除都不该发出");
+}
+
+#[test]
+fn main_worktree_cache_is_not_selected_by_default() {
+    // 主工作区是人天天在用的那个，缓存命中率最高、重建最贵。
+    // 它可以被回收，但不该在 --yes 的默认语义里被顺手带走。
+    let cache = CacheDir {
+        path: PathBuf::from("/repo/target"),
+        kind: CacheKind { name: "target".into(), ecosystem: "rust".into() },
+        bytes: 22_000_000_000,
+        outcomes: vec![GateOutcome { id: GateId::CacheSafe, status: GateStatus::Pass }],
+    };
+    let mut main_wt = wt("/repo", Verdict::Protected { why: "主工作区" }, fingerprint(0, vec![]));
+    main_wt.is_main = true;
+    main_wt.caches = vec![cache.clone()];
+
+    let mut agent_wt = wt("/repo/wt", Verdict::Removable, fingerprint(0, vec![]));
+    agent_wt.caches = vec![CacheDir { path: PathBuf::from("/repo/wt/target"), ..cache }];
+
+    let r = report_with(vec![main_wt, agent_wt]);
+
+    let default_sel = Selection::everything_allowed(&r, false);
+    assert!(
+        !default_sel.reclaim.contains(&PathBuf::from("/repo/target")),
+        "默认不该选中主工作区的缓存"
+    );
+    assert!(
+        default_sel.reclaim.contains(&PathBuf::from("/repo/wt/target")),
+        "agent worktree 的缓存照选"
+    );
+
+    let opted_in = Selection::everything_allowed(&r, true);
+    assert!(
+        opted_in.reclaim.contains(&PathBuf::from("/repo/target")),
+        "显式要求时才带上主工作区"
+    );
 }

@@ -47,6 +47,11 @@ struct Cli {
     #[arg(long, value_name = "N", default_value_t = 10)]
     cache_quiet_mins: u64,
 
+    /// 连主工作区的构建缓存一起回收。默认不碰——那是你天天在用的那个，
+    /// 重建代价最实在。
+    #[arg(long)]
+    include_main: bool,
+
     #[command(subcommand)]
     cmd: Option<Cmd>,
 }
@@ -112,8 +117,12 @@ fn main() -> std::process::ExitCode {
 
     // 破坏性子命令走另一条路：先算计划，再执行（默认只演练）
     match &cli.cmd {
-        Some(Cmd::Reclaim { apply: go }) => return run_actions(&report, &env, true, false, *go),
-        Some(Cmd::Remove { apply: go }) => return run_actions(&report, &env, false, true, *go),
+        Some(Cmd::Reclaim { apply: go }) => {
+            return run_actions(&report, &env, true, false, *go, cli.include_main);
+        }
+        Some(Cmd::Remove { apply: go }) => {
+            return run_actions(&report, &env, false, true, *go, cli.include_main);
+        }
         _ => {}
     }
 
@@ -155,8 +164,9 @@ fn run_actions(
     do_reclaim: bool,
     do_remove: bool,
     go: bool,
+    include_main: bool,
 ) -> std::process::ExitCode {
-    let all = Selection::everything_allowed(report);
+    let all = Selection::everything_allowed(report, include_main);
     let sel = Selection {
         reclaim: if do_reclaim { all.reclaim } else { Default::default() },
         remove: if do_remove { all.remove } else { Default::default() },

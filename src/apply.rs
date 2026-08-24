@@ -114,8 +114,9 @@ fn run_action(action: &Action, env: &Env, fs: &dyn FsOps) -> Outcome {
             if let Err(o) = ensure_within(cache, worktree) {
                 return o;
             }
-            // 规矩 1：状态可能已经变了
-            if let Some(o) = recheck(worktree, expect, env) {
+            // 规矩 1：状态可能已经变了。回收只关心「有没有人在用」——
+            // 源码改动不影响构建产物的可弃性。
+            if let Some(o) = recheck_busy(worktree, expect, env) {
                 return o;
             }
             match fs.remove_dir_all(cache) {
@@ -125,7 +126,11 @@ fn run_action(action: &Action, env: &Env, fs: &dyn FsOps) -> Outcome {
         }
 
         Action::RemoveWorktree { repo, worktree, expect, bytes } => {
-            if let Some(o) = recheck(worktree, expect, env) {
+            // 删除要两关都过：既不能有人在用，也不能有扫描后新增的改动
+            if let Some(o) = recheck_busy(worktree, expect, env) {
+                return o;
+            }
+            if let Some(o) = recheck_dirty(worktree, expect, env) {
                 return o;
             }
             // 规矩 2：不带 --force，失败就失败
@@ -162,10 +167,10 @@ fn run_action(action: &Action, env: &Env, fs: &dyn FsOps) -> Outcome {
     }
 }
 
-/// 重算指纹并与扫描时刻比对。返回 `Some` 表示不该继续。
-fn recheck(worktree: &Path, expect: &crate::model::Fingerprint, env: &Env) -> Option<Outcome> {
-    // 只复检最便宜且最致命的两项：有没有人在用、有没有新的未提交改动。
-    // 复检本身要快——它挡在每一次删除前面。
+/// 复检「有没有人在用」。**两种动作都要过这一关。**
+///
+/// 回收一个正在被写入的 target 会中断构建；删一个有人在用的 worktree 更不用说。
+fn recheck_busy(worktree: &Path, expect: &crate::model::Fingerprint, env: &Env) -> Option<Outcome> {
     match env.procs.processes_under(worktree) {
         Ok(ps) => {
             let now: Vec<u32> = ps.iter().map(|p| p.pid).collect();
@@ -179,6 +184,15 @@ fn recheck(worktree: &Path, expect: &crate::model::Fingerprint, env: &Env) -> Op
         Err(c) => return Some(Outcome::Failed(c)),
     }
 
+    None
+}
+
+/// 复检「未提交改动有没有变」。**只有删除整个 worktree 才需要这一关。**
+///
+/// 回收构建缓存不该受它影响：A 组门禁刻意不含 Dirty，因为未提交的源码改动
+/// 威胁不到 gitignore 的构建产物。把这条一视同仁地用在回收上，代价是实测中
+/// 白白少清了 22.4G——主仓在扫描后多了 11 处改动，而那跟它的 target/ 毫无关系。
+fn recheck_dirty(worktree: &Path, expect: &crate::model::Fingerprint, env: &Env) -> Option<Outcome> {
     let args = ["-c", "status.showUntrackedFiles=all", "status", "--porcelain=v1", "-z", "-uall"];
     match env.git.exec(worktree, &args) {
         Ok(out) if out.code == Some(0) => {
