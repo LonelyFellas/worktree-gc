@@ -1,0 +1,11 @@
+/target
+**/*.rs.bk
+.DS_Store
+
+# gui/ 是 v2 的 Tauri 前端，v1 不参与构建
+/gui/node_modules
+/gui/dist
+/gui/src-tauri/target
+
+# 评估文档留在本地，不进仓库
+/docs
