@@ -36,7 +36,6 @@ h2 { font-size:12px; font-weight:600; color:var(--muted); text-transform:none;
   letter-spacing:.02em; margin:0 0 10px; display:flex; align-items:center; gap:6px; }
 h2 em { font-style:normal; background:var(--faint); border-radius:10px;
   padding:1px 7px; font-size:11px; }
-h2.toggle { cursor:pointer; user-select:none; }
 
 .row { padding:11px 0; border-bottom:1px solid var(--line); }
 .row:last-child { border-bottom:0; }
@@ -88,7 +87,6 @@ h2.toggle { cursor:pointer; user-select:none; }
 /* 仓库管理：清单为空时它是唯一该做的事，有内容时退到后面 */
 .onboard { text-align:center; padding:48px 24px; }
 .onboard p { color:var(--muted); font-size:13px; margin:0 0 16px; }
-.repos { margin-top:40px; padding-top:8px; }
 .repo-line { display:flex; align-items:center; justify-content:space-between;
   gap:12px; padding:8px 0; border-bottom:1px solid var(--line); font-size:12.5px; }
 .repo-line span { color:var(--muted); overflow:hidden;
@@ -96,6 +94,36 @@ h2.toggle { cursor:pointer; user-select:none; }
   font-family:ui-monospace,SFMono-Regular,monospace; }
 .tiny { background:transparent; color:var(--muted); padding:3px 10px; font-size:12px; }
 .tiny:hover { color:#ff3b30; }
-.small { padding:6px 14px; font-size:12px; margin-top:12px; }
 .repo-note { color:var(--muted); font-size:11.5px; margin:12px 0 0; line-height:1.6; }
 .repo-note code { background:var(--faint); padding:1px 5px; border-radius:3px; }
+
+/* ── 可展开区块 ───────────────────────────────────────────
+   高度动画用 grid-template-rows 0fr→1fr。max-height 那套要猜一个够大的值，
+   而这里的内容长度取决于用户有多少个仓库，猜大了收起时会先空转，猜小了会截断。 */
+.collapsible { margin-bottom:28px; }
+.collapsible-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.collapsible-toggle { background:transparent; border:0; padding:6px 0; cursor:pointer;
+  display:flex; align-items:center; gap:6px; border-radius:0;
+  font-size:12px; font-weight:600; color:var(--muted); letter-spacing:.02em; }
+.collapsible-toggle:hover { opacity:1; color:var(--fg); }
+.collapsible-toggle em { font-style:normal; background:var(--faint);
+  border-radius:10px; padding:1px 7px; font-size:11px; }
+.chev { display:inline-block; transition:transform .22s cubic-bezier(.4,0,.2,1);
+  font-size:15px; line-height:1; width:10px; }
+.chev.open { transform:rotate(90deg); }
+
+.collapsible-body { display:grid; grid-template-rows:0fr;
+  transition:grid-template-rows .26s cubic-bezier(.4,0,.2,1); }
+.collapsible-body.open { grid-template-rows:1fr; }
+.collapsible-body > div { overflow:hidden; }
+/* 收起时把内容淡出，否则最后几像素会看到文字被硬切 */
+.collapsible-body > div > * { opacity:0; transition:opacity .18s; }
+.collapsible-body.open > div > * { opacity:1; transition:opacity .22s .08s; }
+
+.add { background:var(--faint); color:var(--muted); width:24px; height:24px;
+  padding:0; font-size:16px; line-height:1; display:grid; place-items:center; }
+.add:hover { color:var(--accent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .chev, .collapsible-body, .collapsible-body > div > * { transition:none; }
+}

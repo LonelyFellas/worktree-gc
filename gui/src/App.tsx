@@ -5,6 +5,7 @@ import type { ScanReport } from "./types";
 import { humanBytes } from "./types";
 import { describeDetail, statusText } from "./describe";
 import { adviceFor, primaryBlocker } from "./advice";
+import { Collapsible } from "./Collapsible";
 import "./App.css";
 
 type PlanSummary = {
@@ -215,12 +216,14 @@ export default function App() {
       )}
 
       {idle.length > 0 && (
-        <section>
-          <h2 className="toggle" onClick={() => setShowIdle(!showIdle)}>
-            {showIdle ? "▾" : "▸"} 不用管 <em>{idle.length}</em>
-          </h2>
-          {showIdle && idle.map((i) => <Row key={i.key} item={i} max={max} />)}
-        </section>
+        <Collapsible
+          open={showIdle}
+          title="不用管"
+          count={idle.length}
+          onToggle={() => setShowIdle(!showIdle)}
+        >
+          {idle.map((i) => <Row key={i.key} item={i} max={max} />)}
+        </Collapsible>
       )}
 
       {repos.length === 0 && !busy && (
@@ -235,26 +238,26 @@ export default function App() {
       )}
 
       {repos.length > 0 && (
-        <section className="repos">
-          <h2 className="toggle" onClick={() => setShowRepos(!showRepos)}>
-            {showRepos ? "▾" : "▸"} 监控的仓库 <em>{repos.length}</em>
-          </h2>
-          {showRepos && (
-            <>
-              {repos.map((r) => (
-                <div key={r} className="repo-line">
-                  <span title={r}>{r.replace(home, "~")}</span>
-                  <button className="tiny" onClick={() => dropRepo(r)}>移除</button>
-                </div>
-              ))}
-              <button className="ghost small" onClick={addRepo}>添加仓库…</button>
-              <p className="repo-note">
-                清单存在 <code>~/.claude/skills/worktree-gc/repos.txt</code>，
-                每日定时体检读的是同一份。
-              </p>
-            </>
-          )}
-        </section>
+        <Collapsible
+          open={showRepos}
+          title="监控的仓库"
+          count={repos.length}
+          onToggle={() => setShowRepos(!showRepos)}
+          action={
+            <button className="add" onClick={addRepo} title="添加仓库">+</button>
+          }
+        >
+          {repos.map((r) => (
+            <div key={r} className="repo-line">
+              <span title={r}>{r.replace(home, "~")}</span>
+              <button className="tiny" onClick={() => dropRepo(r)}>移除</button>
+            </div>
+          ))}
+          <p className="repo-note">
+            清单存在 <code>~/.claude/skills/worktree-gc/repos.txt</code>，
+            每日定时体检读的是同一份。
+          </p>
+        </Collapsible>
       )}
 
       {pending && (
