@@ -33,7 +33,10 @@ impl MergeStatusProvider for NoForge {
 struct FailingGit;
 impl GitRunner for FailingGit {
     fn exec(&self, cwd: &Path, _args: &[&str]) -> Result<GitExec, Cause> {
-        Err(Cause::Io { path: cwd.to_path_buf(), msg: "模拟 git 不可用".into() })
+        Err(Cause::Io {
+            path: cwd.to_path_buf(),
+            msg: "模拟 git 不可用".into(),
+        })
     }
 }
 
@@ -66,6 +69,7 @@ fn ctx<'a>(
 fn repo_with_worktree() -> (TempRepo, std::path::PathBuf) {
     let r = TempRepo::new();
     r.write("README.md", "hello");
+    r.write("Cargo.toml", "[package]\nname='outer'\n");
     r.commit("init");
     let wt = r.worktree("wt", &r.head());
     (r, wt)
@@ -123,10 +127,23 @@ fn registered_nested_worktree_blocks() {
 
     let inner = wt.join(".claude/worktrees/agent-1");
     let head = r.head();
-    r.git_in(&wt, &["worktree", "add", "-q", "--detach", inner.to_str().expect("路径"), &head]);
+    r.git_in(
+        &wt,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            inner.to_str().expect("路径"),
+            &head,
+        ],
+    );
     let inner = inner.canonicalize().expect("canonicalize 内层 worktree");
 
-    assert!(inner.join(".git").is_file(), "前提校验：linked worktree 的 .git 应当是文件");
+    assert!(
+        inner.join(".git").is_file(),
+        "前提校验：linked worktree 的 .git 应当是文件"
+    );
 
     let cfg = ScanConfig::default();
     let git = test_git();
@@ -137,7 +154,11 @@ fn registered_nested_worktree_blocks() {
 
     match NestedGate.evaluate(&c) {
         GateStatus::Blocked(GateDetail::NestedWorktrees { paths }) => {
-            assert_eq!(paths, vec![inner.clone()], "应当且只应当报出内层 worktree 的根路径");
+            assert_eq!(
+                paths,
+                vec![inner.clone()],
+                "应当且只应当报出内层 worktree 的根路径"
+            );
         }
         other => panic!("内嵌注册过的 worktree 必须拦下，实际 {other:?}"),
     }
@@ -170,6 +191,37 @@ fn independent_nested_repo_blocks() {
     }
 }
 
+/// 根仓是 Rust 项目，不代表任意深层同名 `target/` 都是它的构建缓存。
+#[test]
+fn independent_repo_in_unmarked_nested_target_blocks() {
+    let (r, wt) = repo_with_worktree();
+
+    let inner = wt.join("data/target");
+    std::fs::create_dir_all(&inner).expect("建同名资料目录");
+    r.git_in(&inner, &["init", "--template=", "-q", "-b", "main", "."]);
+    std::fs::write(inner.join("notes.txt"), "独立仓内容").expect("写文件");
+    let inner = inner.canonicalize().expect("canonicalize 内层仓");
+
+    let cfg = ScanConfig::default();
+    let git = test_git();
+    let procs = FakeProcs(Ok(vec![]));
+    let clock = FixedClock(SystemTime::now());
+    let forge = NoForge;
+    let head = r.head();
+    let c = ctx(&r, &wt, &head, &cfg, &git, &procs, &clock, &forge);
+
+    match NestedGate.evaluate(&c) {
+        GateStatus::Blocked(GateDetail::NestedWorktrees { paths }) => {
+            assert_eq!(
+                paths,
+                vec![inner],
+                "缺少同级 Cargo.toml 时不得跳过深层 target"
+            );
+        }
+        other => panic!("同名目录里的独立 git 仓必须拦下，实际 {other:?}"),
+    }
+}
+
 /// 内层 worktree 藏在被跳过的 `target/` 里：文件系统扫描故意不进去，
 /// 必须由注册表这条判据兜住，否则就是一个可被构造出来的 fail-open。
 #[test]
@@ -178,7 +230,17 @@ fn nested_worktree_inside_skipped_dir_still_blocks() {
 
     let inner = wt.join("target/scratch/agent-2");
     let head = r.head();
-    r.git_in(&wt, &["worktree", "add", "-q", "--detach", inner.to_str().expect("路径"), &head]);
+    r.git_in(
+        &wt,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            inner.to_str().expect("路径"),
+            &head,
+        ],
+    );
     let inner = inner.canonicalize().expect("canonicalize 内层 worktree");
 
     let cfg = ScanConfig::default();
@@ -195,7 +257,11 @@ fn nested_worktree_inside_skipped_dir_still_blocks() {
 
     match NestedGate.evaluate(&c) {
         GateStatus::Blocked(GateDetail::NestedWorktrees { paths }) => {
-            assert_eq!(paths, vec![inner.clone()], "跳过表内的注册 worktree 应由判据一报出");
+            assert_eq!(
+                paths,
+                vec![inner.clone()],
+                "跳过表内的注册 worktree 应由判据一报出"
+            );
         }
         other => panic!("跳过表挡不住注册表，内层 worktree 仍须拦下，实际 {other:?}"),
     }
@@ -236,7 +302,10 @@ fn git_failure_is_unknown_not_pass() {
     let c = ctx(&r, &wt, &head, &cfg, &git, &procs, &clock, &forge);
 
     assert!(
-        matches!(NestedGate.evaluate(&c), GateStatus::Unknown(Cause::Io { .. })),
+        matches!(
+            NestedGate.evaluate(&c),
+            GateStatus::Unknown(Cause::Io { .. })
+        ),
         "git worktree list 失败时必须落 Unknown，绝不能 fail-open 成 Pass"
     );
 }
@@ -256,7 +325,10 @@ fn missing_worktree_dir_is_unknown() {
     let c = ctx(&r, &wt, &head, &cfg, &git, &procs, &clock, &forge);
 
     assert!(
-        matches!(NestedGate.evaluate(&c), GateStatus::Unknown(Cause::Io { .. })),
+        matches!(
+            NestedGate.evaluate(&c),
+            GateStatus::Unknown(Cause::Io { .. })
+        ),
         "worktree 路径解析不了就是判不准，必须落 Unknown"
     );
 }

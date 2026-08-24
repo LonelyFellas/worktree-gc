@@ -24,8 +24,13 @@ impl Gate for CacheSafeGate {
         let target = ctx.worktree.join(&self.dir);
 
         // ① 必须匹配已知规则 —— 未知目录不当缓存处理
-        if !ctx.cfg.cache_rules.iter().any(|r| r.dir == self.dir) {
+        let Some(rule) = ctx.cfg.cache_rules.iter().find(|r| r.dir == self.dir) else {
             return blocked(CacheUnsafeReason::NoMatchingRule);
+        };
+        if !rule.has_marker_for(ctx.worktree, Path::new(&self.dir)) {
+            return blocked(CacheUnsafeReason::MissingMarker {
+                expected: rule.markers.clone(),
+            });
         }
 
         // ② 不能是符号链接：删它可能波及链接目标之外的东西
@@ -50,20 +55,29 @@ impl Gate for CacheSafeGate {
             (Ok(_), Ok(_)) => {}
             (a, b) => {
                 let p: PathBuf = a.unwrap_or_else(|_| target.clone());
-                let msg = b.err().map(|e| e.to_string()).unwrap_or_else(|| "canonicalize 失败".into());
+                let msg = b
+                    .err()
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "canonicalize 失败".into());
                 return GateStatus::Unknown(Cause::Io { path: p, msg });
             }
         }
 
         // ④ 必须确实被 gitignore —— 没被忽略说明它可能是源码
-        match ctx.git.run_bool(ctx.worktree, &["check-ignore", "-q", &self.dir]) {
+        match ctx
+            .git
+            .run_bool(ctx.worktree, &["check-ignore", "-q", &self.dir])
+        {
             Ok(true) => {}
             Ok(false) => return blocked(CacheUnsafeReason::NotIgnored),
             Err(c) => return GateStatus::Unknown(c),
         }
 
         // ⑤ 目录内不得有任何被 git 跟踪的文件（入库的 dist/ 就栽在这条）
-        match ctx.git.run_ok(ctx.worktree, &["ls-files", "-z", "--", &self.dir]) {
+        match ctx
+            .git
+            .run_ok(ctx.worktree, &["ls-files", "-z", "--", &self.dir])
+        {
             Ok(out) => {
                 let tracked = split_z(&out.stdout);
                 if !tracked.is_empty() {
@@ -82,7 +96,6 @@ impl Gate for CacheSafeGate {
 fn blocked(reason: CacheUnsafeReason) -> GateStatus {
     GateStatus::Blocked(GateDetail::NotPureCache { reason })
 }
-
 
 /// 找出该 worktree 下所有匹配规则、且实际存在的缓存目录名。
 pub fn candidates(worktree: &Path, cfg: &crate::config::ScanConfig) -> Vec<String> {

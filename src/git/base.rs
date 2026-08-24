@@ -23,8 +23,12 @@ const REMOTE_PRIORITY: &[&str] = &["origin", "upstream"];
 
 /// 按约定优先级排序远端。
 fn ordered_remotes(raw: &str) -> Vec<String> {
-    let all: Vec<String> =
-        raw.lines().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect();
+    let all: Vec<String> = raw
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
     let mut out: Vec<String> = Vec::new();
     for want in REMOTE_PRIORITY {
         if let Some(hit) = all.iter().find(|r| r.as_str() == *want) {
@@ -95,8 +99,11 @@ pub fn detect(
     if let Ok(o) = git.run_ok(repo, &["config", "--get", "init.defaultBranch"]) {
         let name = o.stdout_utf8().trim().to_string();
         if !name.is_empty() {
-            let b =
-                Baseline { remote: None, branch: name, source: BaselineSource::Guessed };
+            let b = Baseline {
+                remote: None,
+                branch: name,
+                source: BaselineSource::Guessed,
+            };
             if let Ok(v) = verify(git, repo, b) {
                 return Ok(v);
             }

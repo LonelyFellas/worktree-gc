@@ -51,10 +51,17 @@ impl Gate for NestedGate {
             Err(c) => return GateStatus::Unknown(c),
         };
 
-        match scan_for_git(&root, &ctx.cfg.precious.disposable_dirs) {
+        match scan_for_git(
+            &root,
+            &ctx.cfg.cache_rules,
+            &ctx.cfg.precious.disposable_dirs,
+        ) {
             Ok(v) => found.extend(v),
             Err((path, e)) => {
-                return GateStatus::Unknown(Cause::Io { path, msg: e.to_string() });
+                return GateStatus::Unknown(Cause::Io {
+                    path,
+                    msg: e.to_string(),
+                });
             }
         }
 
@@ -72,7 +79,9 @@ impl Gate for NestedGate {
 
 /// 判据一：`git worktree list --porcelain` 里位于本 worktree 之下的**其它** worktree。
 fn registered_under(ctx: &GateCtx<'_>, root: &Path) -> Result<Vec<PathBuf>, Cause> {
-    let out = ctx.git.run_ok(ctx.repo, &["worktree", "list", "--porcelain"])?;
+    let out = ctx
+        .git
+        .run_ok(ctx.repo, &["worktree", "list", "--porcelain"])?;
 
     let mut hits = Vec::new();
     for entry in porcelain::parse_worktree_list(&out.stdout_utf8()) {
@@ -81,7 +90,12 @@ fn registered_under(ctx: &GateCtx<'_>, root: &Path) -> Result<Vec<PathBuf>, Caus
             // 目录已经不在了（陈旧注册记录，见 D13）：磁盘上没有可丢的东西，
             // 拿它拦住外层只会让用户永远清不掉。其它 IO 错误则是真的判不准。
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => return Err(Cause::Io { path: entry.path, msg: e.to_string() }),
+            Err(e) => {
+                return Err(Cause::Io {
+                    path: entry.path,
+                    msg: e.to_string(),
+                });
+            }
         };
         // 自身要排除；starts_with 是按路径分量比的，`wt-2` 不会被算进 `wt` 之下
         if resolved != *root && resolved.starts_with(root) {
@@ -102,7 +116,8 @@ fn registered_under(ctx: &GateCtx<'_>, root: &Path) -> Result<Vec<PathBuf>, Caus
 /// 错误一律上抛成 `Unknown`：读不动的子目录里完全可能正藏着一个内层 worktree。
 fn scan_for_git(
     root: &Path,
-    skip_dirs: &[String],
+    cache_rules: &[crate::config::CacheRule],
+    disposable_dirs: &[String],
 ) -> Result<Vec<PathBuf>, (PathBuf, std::io::Error)> {
     let dot_git = OsStr::new(".git");
     let mut hits = Vec::new();
@@ -130,12 +145,21 @@ fn scan_for_git(
             }
             // 跳过表：不为了找 .git 去遍历一个 30GB 的 target/。
             // 代价是藏在构建产物目录里的**未注册**内层仓会漏掉——注册过的仍由判据一兜住。
-            if skip_dirs.iter().any(|d| name.as_os_str() == OsStr::new(d.as_str())) {
+            let path = entry.path();
+            let rel = path.strip_prefix(root).unwrap_or(&path);
+            let disposable = name.to_str().is_some_and(|name| {
+                disposable_dirs.iter().any(|dir| dir == name)
+                    && cache_rules
+                        .iter()
+                        .find(|rule| rule.dir == name)
+                        .is_some_and(|rule| rule.has_marker_for(root, rel))
+            });
+            if disposable {
                 continue;
             }
             // file_type 不跟随符号链接：跟过去既可能走出 worktree 之外，也可能兜圈子
             match entry.file_type() {
-                Ok(t) if t.is_dir() => children.push(entry.path()),
+                Ok(t) if t.is_dir() => children.push(path),
                 Ok(_) => {}
                 Err(e) => return Err((entry.path(), e)),
             }

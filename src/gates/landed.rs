@@ -40,7 +40,10 @@ impl Gate for LandedGate {
         let refname = baseline.refname();
 
         // ① 祖先判定：0=是，1=否。这两级 refs 都读不动的话，后面的判据同样不可信 → Unknown
-        match ctx.git.run_bool(ctx.worktree, &["merge-base", "--is-ancestor", "HEAD", &refname]) {
+        match ctx.git.run_bool(
+            ctx.worktree,
+            &["merge-base", "--is-ancestor", "HEAD", &refname],
+        ) {
             Ok(true) => return GateStatus::Pass,
             Ok(false) => {}
             Err(c) => return GateStatus::Unknown(c),
@@ -67,7 +70,10 @@ impl Gate for LandedGate {
             Ok(false) => match forge_err {
                 // forge 没查通时「离线看还有差异」不足以下「没合入」的结论
                 Some(c) => GateStatus::Unknown(c),
-                None => GateStatus::Blocked(GateDetail::NotLanded { ahead, baseline: refname }),
+                None => GateStatus::Blocked(GateDetail::NotLanded {
+                    ahead,
+                    baseline: refname,
+                }),
             },
             Err(c) => GateStatus::Unknown(c),
         }
@@ -77,13 +83,17 @@ impl Gate for LandedGate {
 /// 分支相对基线独有的提交数。
 fn count_ahead(ctx: &GateCtx<'_>, refname: &str) -> Result<usize, Cause> {
     let range = format!("{refname}..HEAD");
-    let out = ctx.git.run_ok(ctx.worktree, &["rev-list", "--count", &range])?;
+    let out = ctx
+        .git
+        .run_ok(ctx.worktree, &["rev-list", "--count", &range])?;
     let text = out.stdout_utf8();
-    text.trim().parse::<usize>().map_err(|e| Cause::CommandFailed {
-        cmd: format!("git rev-list --count {range}"),
-        code: Some(0),
-        stderr: format!("提交数无法解析（{e}）：{}", text.trim()),
-    })
+    text.trim()
+        .parse::<usize>()
+        .map_err(|e| Cause::CommandFailed {
+            cmd: format!("git rev-list --count {range}"),
+            code: Some(0),
+            stderr: format!("提交数无法解析（{e}）：{}", text.trim()),
+        })
 }
 
 /// 第三级：分支改动过的那批文件，在 HEAD 与基线之间是否还有差异。
@@ -98,7 +108,9 @@ fn landed_by_content(ctx: &GateCtx<'_>, refname: &str, ahead: usize) -> Result<b
     }
 
     let merge_base = {
-        let out = ctx.git.run_ok(ctx.worktree, &["merge-base", refname, "HEAD"])?;
+        let out = ctx
+            .git
+            .run_ok(ctx.worktree, &["merge-base", refname, "HEAD"])?;
         let oid = out.stdout_utf8().trim().to_string();
         if oid.is_empty() {
             return Err(Cause::CommandFailed {
@@ -110,7 +122,10 @@ fn landed_by_content(ctx: &GateCtx<'_>, refname: &str, ahead: usize) -> Result<b
         oid
     };
 
-    let out = ctx.git.run_ok(ctx.worktree, &["diff", "--name-only", "-z", &merge_base, "HEAD"])?;
+    let out = ctx.git.run_ok(
+        ctx.worktree,
+        &["diff", "--name-only", "-z", &merge_base, "HEAD"],
+    )?;
     let files = split_z(&out.stdout);
     if files.is_empty() {
         return Ok(false);
@@ -127,4 +142,3 @@ fn landed_by_content(ctx: &GateCtx<'_>, refname: &str, ahead: usize) -> Result<b
     // exit 0 = 这些文件已无差异 → 分支的改动（含 squash 形态）确实已存在于基线中
     ctx.git.run_bool(ctx.worktree, &args)
 }
-

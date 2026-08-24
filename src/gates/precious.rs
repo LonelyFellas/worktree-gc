@@ -38,7 +38,14 @@ impl Gate for PreciousGate {
         // 有它则整个目录折叠成一行 `target/`，下面按名字一次跳过。
         let out = match ctx.git.run_ok(
             ctx.worktree,
-            &["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
+            &[
+                "ls-files",
+                "--others",
+                "--ignored",
+                "--exclude-standard",
+                "--directory",
+                "-z",
+            ],
         ) {
             Ok(o) => o,
             // 列不出来就是判不准。此处返回 Pass 等于宣布「没有敏感文件」，正是 D7 的形状。
@@ -147,11 +154,18 @@ fn inspect(
     }
 }
 
-/// 只按目录名判断，且**只对目录生效**：一个名字恰好叫 `build` 的文件不该被当成构建目录跳过。
+/// 名字和生态 marker 必须同时匹配，且**只对目录生效**。
+/// 否则一个被忽略、恰好叫 `target/` 的资料目录会绕过敏感文件检查。
 fn is_disposable(ctx: &GateCtx<'_>, rel: &Path) -> bool {
     match rel.file_name().and_then(|n| n.to_str()) {
-        Some(name) => ctx.cfg.precious.disposable_dirs.iter().any(|d| d == name),
+        Some(name) if ctx.cfg.precious.disposable_dirs.iter().any(|d| d == name) => ctx
+            .cfg
+            .cache_rules
+            .iter()
+            .find(|rule| rule.dir == name)
+            .is_some_and(|rule| rule.has_marker_for(ctx.worktree, rel)),
         None => false,
+        Some(_) => false,
     }
 }
 
@@ -220,9 +234,11 @@ fn same_content(a: &Path, b: &Path) -> std::io::Result<bool> {
 }
 
 fn io_cause(path: &Path, e: &std::io::Error) -> Cause {
-    Cause::Io { path: path.to_path_buf(), msg: e.to_string() }
+    Cause::Io {
+        path: path.to_path_buf(),
+        msg: e.to_string(),
+    }
 }
-
 
 #[cfg(test)]
 mod tests {

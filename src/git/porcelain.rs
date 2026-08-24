@@ -136,7 +136,11 @@ pub fn parse_ls_files_marked(s: &str) -> Vec<String> {
         .filter_map(|l| {
             let tag = l.chars().next()?;
             let hidden = tag.is_lowercase() || tag == 'S';
-            if hidden { l.get(2..).map(|p| p.to_string()) } else { None }
+            if hidden {
+                l.get(2..).map(|p| p.to_string())
+            } else {
+                None
+            }
         })
         .collect()
 }
@@ -178,7 +182,10 @@ mod tests {
         // 实测 git 2.53 的四种形态。`s` 是两个标记同时置位时的标签，
         // 早期只认 S/h 的写法会把它漏掉——而它改动后 status 一样是空的。
         let s = "H normal.txt\nS skip.txt\nh assume.txt\ns both.txt\nH other.txt\n";
-        assert_eq!(parse_ls_files_marked(s), vec!["skip.txt", "assume.txt", "both.txt"]);
+        assert_eq!(
+            parse_ls_files_marked(s),
+            vec!["skip.txt", "assume.txt", "both.txt"]
+        );
     }
 
     #[test]

@@ -12,8 +12,14 @@
 //! 4. **回收量报实测差值**，不报 du 的估算。APFS 写时复制会让估算系统性偏高，
 //!    数字对不上就会丢掉用户的信任。
 
+use crate::config::ScanConfig;
 use crate::fsops::FsOps;
-use crate::model::Cause;
+use crate::gates::{
+    Gate, GateCtx, busy::BusyGate, cachesafe::CacheSafeGate, dirty::DirtyGate,
+    inprogress::InProgressGate, locked::LockedGate, nested::NestedGate, precious::PreciousGate,
+    recent::RecentGate,
+};
+use crate::model::{Cause, GateStatus};
 use crate::plan::{Action, Plan};
 use crate::platform::disk;
 use crate::scan::Env;
@@ -29,15 +35,22 @@ pub struct ApplyOptions {
 
 impl Default for ApplyOptions {
     fn default() -> Self {
-        Self { dry_run: true, audit_log: None }
+        Self {
+            dry_run: true,
+            audit_log: None,
+        }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
-    Done { freed_estimate: u64 },
+    Done {
+        freed_estimate: u64,
+    },
     /// 指纹对不上——状态在扫描之后变了。
-    Stale { what: String },
+    Stale {
+        what: String,
+    },
     Failed(Cause),
     /// dry-run 下的占位。
     Simulated,
@@ -61,14 +74,32 @@ pub struct ApplyReport {
 
 impl ApplyReport {
     pub fn done_count(&self) -> usize {
-        self.results.iter().filter(|r| matches!(r.outcome, Outcome::Done { .. })).count()
+        self.results
+            .iter()
+            .filter(|r| matches!(r.outcome, Outcome::Done { .. }))
+            .count()
     }
     pub fn stale_count(&self) -> usize {
-        self.results.iter().filter(|r| matches!(r.outcome, Outcome::Stale { .. })).count()
+        self.results
+            .iter()
+            .filter(|r| matches!(r.outcome, Outcome::Stale { .. }))
+            .count()
+    }
+    pub fn failed_count(&self) -> usize {
+        self.results
+            .iter()
+            .filter(|r| matches!(r.outcome, Outcome::Failed(_)))
+            .count()
     }
 }
 
-pub fn apply(plan: &Plan, opts: &ApplyOptions, env: &Env, fs: &dyn FsOps) -> ApplyReport {
+pub fn apply(
+    plan: &Plan,
+    opts: &ApplyOptions,
+    cfg: &ScanConfig,
+    env: &Env,
+    fs: &dyn FsOps,
+) -> ApplyReport {
     let before = probe_available();
     let mut report = ApplyReport {
         estimated_freed: plan.estimated_bytes(),
@@ -80,7 +111,7 @@ pub fn apply(plan: &Plan, opts: &ApplyOptions, env: &Env, fs: &dyn FsOps) -> App
         let outcome = if opts.dry_run {
             Outcome::Simulated
         } else {
-            run_action(action, env, fs)
+            run_action(action, cfg, env, fs)
         };
         report.results.push(ActionResult {
             action: action.clone(),
@@ -107,36 +138,77 @@ pub fn apply(plan: &Plan, opts: &ApplyOptions, env: &Env, fs: &dyn FsOps) -> App
     report
 }
 
-fn run_action(action: &Action, env: &Env, fs: &dyn FsOps) -> Outcome {
+fn run_action(action: &Action, cfg: &ScanConfig, env: &Env, fs: &dyn FsOps) -> Outcome {
     match action {
-        Action::ReclaimCache { worktree, cache, expect, bytes, .. } => {
+        Action::ReclaimCache {
+            worktree,
+            cache,
+            kind,
+            expect,
+            bytes,
+        } => {
             // 规矩 3：解析后必须仍在这个 worktree 之下
             if let Err(o) = ensure_within(cache, worktree) {
                 return o;
             }
-            // 规矩 1：状态可能已经变了。回收只关心「有没有人在用」——
-            // 源码改动不影响构建产物的可弃性。
-            if let Some(o) = recheck_busy(worktree, expect, env) {
+            // 源码改动不影响构建产物的可弃性，但 A 组三道门必须全部重跑。
+            // 这同时挡住扫描后开始构建、刚写入、改 gitignore、加入 tracked 文件、
+            // 或把同名目录换成非构建内容等状态漂移。
+            let ctx = GateCtx {
+                repo: worktree,
+                worktree,
+                branch: None,
+                head_oid: &expect.head_oid,
+                baseline: None,
+                cfg,
+                git: env.git.as_ref(),
+                procs: env.procs.as_ref(),
+                clock: env.clock.as_ref(),
+                forge: env.forge.as_ref(),
+            };
+            if let Some(o) = recheck_gate(&BusyGate, &ctx)
+                .or_else(|| {
+                    recheck_gate(
+                        &RecentGate {
+                            dir: kind.name.clone(),
+                        },
+                        &ctx,
+                    )
+                })
+                .or_else(|| {
+                    recheck_gate(
+                        &CacheSafeGate {
+                            dir: kind.name.clone(),
+                        },
+                        &ctx,
+                    )
+                })
+            {
                 return o;
             }
             match fs.remove_dir_all(cache) {
-                Ok(()) => Outcome::Done { freed_estimate: *bytes },
+                Ok(()) => Outcome::Done {
+                    freed_estimate: *bytes,
+                },
                 Err(c) => Outcome::Failed(c),
             }
         }
 
-        Action::RemoveWorktree { repo, worktree, expect, bytes } => {
-            // 删除要两关都过：既不能有人在用，也不能有扫描后新增的改动
-            if let Some(o) = recheck_busy(worktree, expect, env) {
-                return o;
-            }
-            if let Some(o) = recheck_dirty(worktree, expect, env) {
+        Action::RemoveWorktree {
+            repo,
+            worktree,
+            expect,
+            bytes,
+        } => {
+            if let Some(o) = recheck_removal(repo, worktree, expect, cfg, env) {
                 return o;
             }
             // 规矩 2：不带 --force，失败就失败
             let args = ["worktree", "remove", &*worktree.to_string_lossy()];
             match env.git.exec(repo, &args) {
-                Ok(out) if out.code == Some(0) => Outcome::Done { freed_estimate: *bytes },
+                Ok(out) if out.code == Some(0) => Outcome::Done {
+                    freed_estimate: *bytes,
+                },
                 Ok(out) => Outcome::Failed(Cause::CommandFailed {
                     cmd: format!("git worktree remove {}", worktree.display()),
                     code: out.code,
@@ -146,12 +218,18 @@ fn run_action(action: &Action, env: &Env, fs: &dyn FsOps) -> Outcome {
             }
         }
 
-        Action::PruneAdmin { repo, confirmed_missing } => {
+        Action::PruneAdmin {
+            repo,
+            confirmed_missing,
+        } => {
             // D13：外置盘临时没挂载时目录也"不存在"，无条件 prune 会删掉本该保留的注册记录。
             // 所以执行前再确认一次，任何一条又出现了就整体放弃。
             if let Some(back) = confirmed_missing.iter().find(|p| fs.exists(p)) {
                 return Outcome::Stale {
-                    what: format!("{} 又出现了（外置盘挂回来了？），本次不 prune", back.display()),
+                    what: format!(
+                        "{} 又出现了（外置盘挂回来了？），本次不 prune",
+                        back.display()
+                    ),
                 };
             }
             match env.git.exec(repo, &["worktree", "prune"]) {
@@ -167,49 +245,82 @@ fn run_action(action: &Action, env: &Env, fs: &dyn FsOps) -> Outcome {
     }
 }
 
-/// 复检「有没有人在用」。**两种动作都要过这一关。**
+/// 删除整个 worktree 前重跑所有会随时间变化的安全判据。
 ///
-/// 回收一个正在被写入的 target 会中断构建；删一个有人在用的 worktree 更不用说。
-fn recheck_busy(worktree: &Path, expect: &crate::model::Fingerprint, env: &Env) -> Option<Outcome> {
-    match env.procs.processes_under(worktree) {
-        Ok(ps) => {
-            let now: Vec<u32> = ps.iter().map(|p| p.pid).collect();
-            if !now.is_empty() && now != expect.busy_pids {
-                return Some(Outcome::Stale {
-                    what: format!("现在有 {} 个进程在使用它", now.len()),
-                });
-            }
-        }
-        // 扫描时能判断、现在判不准了，同样不能继续
-        Err(c) => return Some(Outcome::Failed(c)),
+/// Landed 不重跑：计划只可能来自已经通过 Landed 的扫描，而 HEAD 的精确 oid 在这里
+/// 重新对账。工作内容没变时，重复网络/forge 查询不会增加数据安全，只会让离线执行失效。
+fn recheck_removal(
+    repo: &Path,
+    worktree: &Path,
+    expect: &crate::model::Fingerprint,
+    cfg: &ScanConfig,
+    env: &Env,
+) -> Option<Outcome> {
+    let initial_ctx = GateCtx {
+        repo,
+        worktree,
+        branch: None,
+        head_oid: &expect.head_oid,
+        baseline: None,
+        cfg,
+        git: env.git.as_ref(),
+        procs: env.procs.as_ref(),
+        clock: env.clock.as_ref(),
+        forge: env.forge.as_ref(),
+    };
+    if let Some(outcome) = recheck_gate(&BusyGate, &initial_ctx) {
+        return Some(outcome);
     }
 
-    None
+    let head = match env.git.run_ok(worktree, &["rev-parse", "HEAD"]) {
+        Ok(out) => out.stdout_utf8().trim().to_string(),
+        Err(c) => return Some(Outcome::Failed(c)),
+    };
+    if head.is_empty() {
+        return Some(Outcome::Failed(Cause::CommandFailed {
+            cmd: "git rev-parse HEAD".into(),
+            code: Some(0),
+            stderr: "命令成功但没有输出 HEAD oid".into(),
+        }));
+    }
+    if head != expect.head_oid {
+        return Some(Outcome::Stale {
+            what: format!("HEAD 已从 {} 变成 {head}", expect.head_oid),
+        });
+    }
+
+    let ctx = GateCtx {
+        repo,
+        worktree,
+        branch: None,
+        head_oid: &head,
+        baseline: None,
+        cfg,
+        git: env.git.as_ref(),
+        procs: env.procs.as_ref(),
+        clock: env.clock.as_ref(),
+        forge: env.forge.as_ref(),
+    };
+
+    recheck_gate(&DirtyGate, &ctx)
+        .or_else(|| recheck_gate(&PreciousGate, &ctx))
+        .or_else(|| recheck_gate(&NestedGate, &ctx))
+        .or_else(|| recheck_gate(&InProgressGate, &ctx))
+        .or_else(|| recheck_gate(&LockedGate, &ctx))
 }
 
-/// 复检「未提交改动有没有变」。**只有删除整个 worktree 才需要这一关。**
-///
-/// 回收构建缓存不该受它影响：A 组门禁刻意不含 Dirty，因为未提交的源码改动
-/// 威胁不到 gitignore 的构建产物。把这条一视同仁地用在回收上，代价是实测中
-/// 白白少清了 22.4G——主仓在扫描后多了 11 处改动，而那跟它的 target/ 毫无关系。
-fn recheck_dirty(worktree: &Path, expect: &crate::model::Fingerprint, env: &Env) -> Option<Outcome> {
-    let args = ["-c", "status.showUntrackedFiles=all", "status", "--porcelain=v1", "-z", "-uall"];
-    match env.git.exec(worktree, &args) {
-        Ok(out) if out.code == Some(0) => {
-            let n = crate::git::porcelain::split_z(&out.stdout).len();
-            if n != expect.dirty_count {
-                return Some(Outcome::Stale {
-                    what: format!("未提交改动从 {} 处变成了 {n} 处", expect.dirty_count),
-                });
-            }
-            None
-        }
-        Ok(out) => Some(Outcome::Failed(Cause::CommandFailed {
-            cmd: "git status（执行前复检）".into(),
-            code: out.code,
-            stderr: out.stderr,
+fn recheck_gate<G: Gate>(gate: &G, ctx: &GateCtx<'_>) -> Option<Outcome> {
+    match gate.evaluate(ctx) {
+        GateStatus::Pass => None,
+        GateStatus::Blocked(detail) => Some(Outcome::Stale {
+            what: format!("{} 门禁已不再通过：{detail:?}", gate.id().as_str()),
+        }),
+        GateStatus::Unknown(c) => Some(Outcome::Failed(c)),
+        GateStatus::Skipped => Some(Outcome::Failed(Cause::CommandFailed {
+            cmd: format!("执行前复检 {}", gate.id().as_str()),
+            code: None,
+            stderr: "安全门禁被意外跳过".into(),
         })),
-        Err(c) => Some(Outcome::Failed(c)),
     }
 }
 
@@ -237,21 +348,34 @@ fn ensure_within(target: &Path, root: &Path) -> Result<(), Outcome> {
 /// 删除后怎么把它变回来。worktree 删了分支还在，所以总是可重建的。
 fn restore_hint(action: &Action) -> Option<String> {
     match action {
-        Action::RemoveWorktree { repo, worktree, expect, .. } => Some(format!(
+        Action::RemoveWorktree {
+            repo,
+            worktree,
+            expect,
+            ..
+        } => Some(format!(
             "git -C {} worktree add {} {}",
             repo.display(),
             worktree.display(),
-            if expect.head_oid.is_empty() { "<commit>" } else { &expect.head_oid }
+            if expect.head_oid.is_empty() {
+                "<commit>"
+            } else {
+                &expect.head_oid
+            }
         )),
-        Action::ReclaimCache { worktree, kind, .. } => {
-            Some(format!("在 {} 重新构建即可恢复 {}/", worktree.display(), kind.name))
-        }
+        Action::ReclaimCache { worktree, kind, .. } => Some(format!(
+            "在 {} 重新构建即可恢复 {}/",
+            worktree.display(),
+            kind.name
+        )),
         Action::PruneAdmin { .. } => Some("git worktree repair".into()),
     }
 }
 
 fn probe_available() -> Option<u64> {
-    std::env::current_dir().ok().and_then(|p| disk::available_bytes(&p).ok())
+    std::env::current_dir()
+        .ok()
+        .and_then(|p| disk::available_bytes(&p).ok())
 }
 
 fn write_audit(path: &Path, report: &ApplyReport, fs: &dyn FsOps) -> Result<(), Cause> {
@@ -263,7 +387,10 @@ fn write_audit(path: &Path, report: &ApplyReport, fs: &dyn FsOps) -> Result<(), 
         .create(true)
         .append(true)
         .open(path)
-        .map_err(|e| Cause::Io { path: path.to_path_buf(), msg: e.to_string() })?;
+        .map_err(|e| Cause::Io {
+            path: path.to_path_buf(),
+            msg: e.to_string(),
+        })?;
     for r in &report.results {
         let line = format!(
             "{{\"target\":{:?},\"outcome\":\"{:?}\",\"restore\":{:?}}}\n",
@@ -271,8 +398,10 @@ fn write_audit(path: &Path, report: &ApplyReport, fs: &dyn FsOps) -> Result<(), 
             r.outcome,
             r.restore_hint.clone().unwrap_or_default()
         );
-        f.write_all(line.as_bytes())
-            .map_err(|e| Cause::Io { path: path.to_path_buf(), msg: e.to_string() })?;
+        f.write_all(line.as_bytes()).map_err(|e| Cause::Io {
+            path: path.to_path_buf(),
+            msg: e.to_string(),
+        })?;
     }
     Ok(())
 }

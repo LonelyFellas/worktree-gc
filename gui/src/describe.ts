@@ -18,6 +18,8 @@ export function describeCause(c: Cause): string {
 }
 
 function describeCacheReason(r: CacheUnsafeReason): string {
+  if (typeof r === "object" && "MissingMarker" in r)
+    return `缺少项目佐证文件（需要其一：${r.MissingMarker.expected.join("、")}）`;
   if (r === "NotIgnored") return "该目录未被 gitignore，可能不是构建产物";
   if (r === "IsSymlink") return "是符号链接，删它会波及链接目标";
   if (r === "NoMatchingRule") return "不匹配任何已知的构建缓存规则";

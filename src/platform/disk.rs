@@ -27,7 +27,11 @@ pub fn human_bytes(n: u64) -> String {
         v /= 1024.0;
         i += 1;
     }
-    if i == 0 { format!("{n}B") } else { format!("{v:.1}{}", UNITS[i]) }
+    if i == 0 {
+        format!("{n}B")
+    } else {
+        format!("{v:.1}{}", UNITS[i])
+    }
 }
 
 #[cfg(test)]

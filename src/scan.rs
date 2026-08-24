@@ -49,7 +49,10 @@ pub fn scan(cfg: &ScanConfig, env: &Env) -> ScanReport {
     ScanReport {
         repos,
         available_bytes,
-        tools: vec![exe::probe("git", "--version"), exe::probe("gh", "--version")],
+        tools: vec![
+            exe::probe("git", "--version"),
+            exe::probe("gh", "--version"),
+        ],
     }
 }
 
@@ -66,7 +69,13 @@ fn scan_repo(d: &Discovered, cfg: &ScanConfig, env: &Env) -> RepoReport {
         .collect();
     subtract_nested_sizes(&mut worktrees);
 
-    RepoReport { root: d.root.clone(), baseline, baseline_error, worktrees, prunable: d.prunable.clone() }
+    RepoReport {
+        root: d.root.clone(),
+        baseline,
+        baseline_error,
+        worktrees,
+        prunable: d.prunable.clone(),
+    }
 }
 
 fn scan_worktree(
@@ -94,7 +103,10 @@ fn scan_worktree(
 
     // Busy 同时服务两个层级：worktree 能不能删要看它，缓存能不能回收也要看它。
     // 只求值一次，两处共用——重复起进程扫描是这套流程里最贵的一步。
-    let busy = GateOutcome { id: GateId::Busy, status: busy::BusyGate.evaluate(&ctx) };
+    let busy = GateOutcome {
+        id: GateId::Busy,
+        status: busy::BusyGate.evaluate(&ctx),
+    };
 
     let caches = scan_caches(&ctx, &busy);
     let bytes = sizing::dir_size(&entry.path).unwrap_or(0);
@@ -109,7 +121,9 @@ fn scan_worktree(
             bytes,
             caches,
             outcomes: vec![busy],
-            verdict: Verdict::Protected { why: "主工作区" },
+            verdict: Verdict::Protected {
+                why: "主工作区"
+            },
             fingerprint: Fingerprint {
                 head_oid,
                 dirty_count: 0,
@@ -120,12 +134,30 @@ fn scan_worktree(
     }
 
     let b_gates: Vec<GateOutcome> = vec![
-        GateOutcome { id: GateId::Dirty, status: dirty::DirtyGate.evaluate(&ctx) },
-        GateOutcome { id: GateId::Landed, status: landed::LandedGate.evaluate(&ctx) },
-        GateOutcome { id: GateId::Precious, status: precious::PreciousGate.evaluate(&ctx) },
-        GateOutcome { id: GateId::Nested, status: nested::NestedGate.evaluate(&ctx) },
-        GateOutcome { id: GateId::InProgress, status: inprogress::InProgressGate.evaluate(&ctx) },
-        GateOutcome { id: GateId::Locked, status: locked::LockedGate.evaluate(&ctx) },
+        GateOutcome {
+            id: GateId::Dirty,
+            status: dirty::DirtyGate.evaluate(&ctx),
+        },
+        GateOutcome {
+            id: GateId::Landed,
+            status: landed::LandedGate.evaluate(&ctx),
+        },
+        GateOutcome {
+            id: GateId::Precious,
+            status: precious::PreciousGate.evaluate(&ctx),
+        },
+        GateOutcome {
+            id: GateId::Nested,
+            status: nested::NestedGate.evaluate(&ctx),
+        },
+        GateOutcome {
+            id: GateId::InProgress,
+            status: inprogress::InProgressGate.evaluate(&ctx),
+        },
+        GateOutcome {
+            id: GateId::Locked,
+            status: locked::LockedGate.evaluate(&ctx),
+        },
     ];
 
     let verdict = Verdict::from_outcomes(std::slice::from_ref(&busy), Some(&b_gates));
@@ -171,7 +203,15 @@ fn scan_caches(ctx: &GateCtx<'_>, busy: &GateOutcome) -> Vec<CacheDir> {
                 .find(|r| r.dir == dir)
                 .map(|r| r.ecosystem.clone())
                 .unwrap_or_default();
-            CacheDir { path, kind: CacheKind { name: dir, ecosystem }, bytes, outcomes }
+            CacheDir {
+                path,
+                kind: CacheKind {
+                    name: dir,
+                    ecosystem,
+                },
+                bytes,
+                outcomes,
+            }
         })
         .collect()
 }
@@ -213,12 +253,21 @@ fn fingerprint_of(head_oid: &str, busy: &GateOutcome, b: &[GateOutcome]) -> Fing
     let precious_digest = b
         .iter()
         .find_map(|o| match &o.status {
-            GateStatus::Blocked(GateDetail::PreciousFiles { paths }) => {
-                Some(paths.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join("\u{1}"))
-            }
+            GateStatus::Blocked(GateDetail::PreciousFiles { paths }) => Some(
+                paths
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join("\u{1}"),
+            ),
             _ => None,
         })
         .unwrap_or_default();
 
-    Fingerprint { head_oid: head_oid.to_string(), dirty_count, busy_pids, precious_digest }
+    Fingerprint {
+        head_oid: head_oid.to_string(),
+        dirty_count,
+        busy_pids,
+        precious_digest,
+    }
 }

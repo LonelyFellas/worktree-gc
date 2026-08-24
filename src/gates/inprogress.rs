@@ -38,7 +38,10 @@ impl Gate for InProgressGate {
         // linked worktree 的 `<wt>/.git` 是一个**文件**，中间态标记落在
         // `<main>/.git/worktrees/<name>/` 下。拼路径猜名字迟早猜错
         // （worktree 目录名与注册名可以不一致），只有问 git 才可靠。
-        let git_dir = match ctx.git.run_ok(ctx.worktree, &["rev-parse", "--absolute-git-dir"]) {
+        let git_dir = match ctx
+            .git
+            .run_ok(ctx.worktree, &["rev-parse", "--absolute-git-dir"])
+        {
             Ok(out) => {
                 let s = out.stdout_utf8().trim().to_string();
                 // 空输出若当成空路径用，后面的 join 会相对进程 cwd 解析，
@@ -61,7 +64,10 @@ impl Gate for InProgressGate {
                 Ok(true) => return GateStatus::Blocked(GateDetail::OperationInProgress { kind }),
                 Ok(false) => {}
                 Err(e) => {
-                    return GateStatus::Unknown(Cause::Io { path, msg: e.to_string() });
+                    return GateStatus::Unknown(Cause::Io {
+                        path,
+                        msg: e.to_string(),
+                    });
                 }
             }
         }

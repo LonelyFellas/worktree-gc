@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -54,10 +61,12 @@ test("wtgc 参数始终保持只读离线，路径不经过 shell", () => {
   assert.deepEqual(buildWtgcArgs([suspiciousPath]), [
     "--json",
     "--offline",
+    "--no-default-seeds",
     "--repo",
     suspiciousPath,
     "scan",
   ]);
+  assert.deepEqual(buildWtgcArgs([]), ["--json", "--offline", "scan"]);
 });
 
 test("汇总可回收缓存、可删除 worktree 和待确认项", () => {
@@ -172,10 +181,22 @@ test(
   { skip: process.platform === "win32" },
   async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "worktree-gc-plugin-test-"));
-    const fakeWtgc = join(tempDir, "wtgc-fixture");
-    const pluginServer = fileURLToPath(
+    const sourceServer = fileURLToPath(
       new URL("../../plugins/worktree-gc/mcp/server.mjs", import.meta.url),
     );
+    const sourceWidget = fileURLToPath(
+      new URL(
+        "../../plugins/worktree-gc/widget/worktree-report.html",
+        import.meta.url,
+      ),
+    );
+    const pluginServer = join(tempDir, "mcp", "server.mjs");
+    const fakeWtgc = join(tempDir, "bin", "wtgc");
+    await mkdir(join(tempDir, "mcp"), { recursive: true });
+    await mkdir(join(tempDir, "bin"), { recursive: true });
+    await mkdir(join(tempDir, "widget"), { recursive: true });
+    await copyFile(sourceServer, pluginServer);
+    await copyFile(sourceWidget, join(tempDir, "widget", "worktree-report.html"));
     await writeFile(
       fakeWtgc,
       `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(JSON.stringify(report))});\n`,
@@ -188,7 +209,6 @@ test(
       args: [pluginServer],
       env: {
         PATH: process.env.PATH ?? "",
-        WTGC_BIN: fakeWtgc,
       },
     });
     const client = new Client({

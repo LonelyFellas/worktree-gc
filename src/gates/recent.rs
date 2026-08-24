@@ -29,7 +29,10 @@ impl Gate for RecentGate {
         let quiet = ctx.cfg.cache_quiet;
 
         match newest_mtime(&target, MAX_DEPTH) {
-            Err(e) => GateStatus::Unknown(Cause::Io { path: target, msg: e.to_string() }),
+            Err(e) => GateStatus::Unknown(Cause::Io {
+                path: target,
+                msg: e.to_string(),
+            }),
             Ok(None) => GateStatus::Pass, // 空目录，没什么可判的
             Ok(Some((path, mtime))) => match now.duration_since(mtime) {
                 Ok(age) if age >= quiet => GateStatus::Pass,

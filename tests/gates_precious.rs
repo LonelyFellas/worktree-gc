@@ -130,6 +130,50 @@ fn disposable_build_cache_alone_passes() {
     );
 }
 
+/// 可弃目录也必须有生态 marker；否则 PreciousGate 会把同名资料目录整个跳过。
+#[test]
+fn ignored_target_without_marker_is_precious() {
+    let r = TempRepo::new();
+    r.write(".gitignore", "target/\n");
+    r.write("a.txt", "x");
+    r.commit("init");
+    let wt = r.worktree("wt", &r.head());
+    std::fs::create_dir_all(wt.join("target")).expect("建 target");
+    std::fs::write(wt.join("target/notes.txt"), "不可重建的资料").expect("写资料");
+
+    let cfg = ScanConfig::default();
+    let git = test_git();
+    let procs = FakeProcs(Ok(vec![]));
+    let clock = FixedClock(SystemTime::now());
+    let forge = NoForge;
+    let head = r.head();
+    let c = ctx(&r, &wt, &head, &cfg, &git, &procs, &clock, &forge);
+
+    assert_blocked_with(&PreciousGate.evaluate(&c), "target/notes.txt");
+}
+
+/// 根目录有 Cargo.toml 也不能替深层同名目录作证；marker 必须属于缓存的同级项目。
+#[test]
+fn nested_target_without_nearby_marker_is_precious() {
+    let r = TempRepo::new();
+    r.write(".gitignore", "data/target/\n");
+    r.write("Cargo.toml", "[package]\nname='outer'\n");
+    r.commit("init");
+    let wt = r.worktree("wt", &r.head());
+    std::fs::create_dir_all(wt.join("data/target")).expect("建深层 target");
+    std::fs::write(wt.join("data/target/notes.txt"), "不可重建的资料").expect("写资料");
+
+    let cfg = ScanConfig::default();
+    let git = test_git();
+    let procs = FakeProcs(Ok(vec![]));
+    let clock = FixedClock(SystemTime::now());
+    let forge = NoForge;
+    let head = r.head();
+    let c = ctx(&r, &wt, &head, &cfg, &git, &procs, &clock, &forge);
+
+    assert_blocked_with(&PreciousGate.evaluate(&c), "data/target/notes.txt");
+}
+
 /// **D1**：`ls-files --directory` 把整个被忽略的目录折叠成一行 `secrets/`，
 /// 原型按「不是文件」跳过，于是含 prod.key 的整个目录被静默删掉。
 #[test]
@@ -188,8 +232,11 @@ fn diverged_env_is_blocked() {
     r.commit("init");
     r.write(".env", "API_URL=http://localhost:8383\n");
     let wt = r.worktree("wt", &r.head());
-    std::fs::write(wt.join(".env"), "API_URL=http://staging.internal\nTOKEN=只此一份\n")
-        .expect("写 .env");
+    std::fs::write(
+        wt.join(".env"),
+        "API_URL=http://staging.internal\nTOKEN=只此一份\n",
+    )
+    .expect("写 .env");
 
     let cfg = ScanConfig::default();
     let git = test_git();
@@ -331,7 +378,10 @@ fn git_failure_is_unknown_never_pass() {
     let c = ctx(&r, &wt, &head, &cfg, &git, &procs, &clock, &forge);
 
     assert!(
-        matches!(PreciousGate.evaluate(&c), GateStatus::Unknown(Cause::CommandFailed { .. })),
+        matches!(
+            PreciousGate.evaluate(&c),
+            GateStatus::Unknown(Cause::CommandFailed { .. })
+        ),
         "git 失败必须落 Unknown；返回 Pass 就是 D7 那种静默放行"
     );
 }

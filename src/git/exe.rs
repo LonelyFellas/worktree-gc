@@ -7,6 +7,7 @@
 //! 用哪个必须写进报告。
 
 use crate::model::ToolInfo;
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 /// 除继承的 PATH 外，额外探查的常见安装位置。
@@ -20,28 +21,56 @@ const EXTRA_DIRS: &[&str] = &[
 
 /// 找到某个外部程序的实际路径。先看 PATH，再兜底常见目录。
 pub fn resolve(name: &str) -> Option<PathBuf> {
+    let names = executable_names(name);
     if let Ok(path) = std::env::var("PATH") {
         for dir in std::env::split_paths(&path) {
-            let p = dir.join(name);
+            for candidate in &names {
+                let p = dir.join(candidate);
+                if is_executable(&p) {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    for d in EXTRA_DIRS {
+        for candidate in &names {
+            let p = PathBuf::from(d).join(candidate);
             if is_executable(&p) {
                 return Some(p);
             }
         }
     }
-    for d in EXTRA_DIRS {
-        let p = PathBuf::from(d).join(name);
-        if is_executable(&p) {
-            return Some(p);
-        }
-    }
     None
+}
+
+fn executable_names(name: &str) -> Vec<OsString> {
+    let names = vec![OsString::from(name)];
+    #[cfg(windows)]
+    {
+        let mut names = names;
+        if std::path::Path::new(name).extension().is_none() {
+            let raw = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+            names.extend(
+                raw.split(';')
+                    .filter(|ext| !ext.is_empty())
+                    .map(|ext| OsString::from(format!("{name}{ext}"))),
+            );
+        }
+        names
+    }
+    #[cfg(not(windows))]
+    {
+        names
+    }
 }
 
 fn is_executable(p: &std::path::Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        p.metadata().map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+        p.metadata()
+            .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
     }
     #[cfg(not(unix))]
     {
@@ -61,10 +90,19 @@ pub fn probe(name: &'static str, version_arg: &str) -> ToolInfo {
             // gh --version 会连带打印 release 页地址，多行会把报告尾巴撑乱。
             // 版本号一律在首行。
             .map(|o| {
-                String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or_default().trim().to_string()
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string()
             })
     });
-    ToolInfo { name, path, version }
+    ToolInfo {
+        name,
+        path,
+        version,
+    }
 }
 
 #[cfg(test)]

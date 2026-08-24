@@ -43,7 +43,9 @@ fn run_scan(repos: Vec<String>, offline: bool) -> Result<ScanReport, String> {
         cache_quiet: Duration::from_secs(600),
         ..ScanConfig::default()
     };
-    cfg.seeds.extend(discover::default_seeds());
+    if cfg.repos.is_empty() {
+        cfg.seeds.extend(discover::default_seeds());
+    }
 
     // 打包后的 .app 从 Finder 启动时 PATH 里没有 homebrew，gh 会找不到。
     // wtgc 的 exe::resolve 会兜底探常见目录，但找不到时必须走离线判定而不是崩掉。
@@ -249,7 +251,14 @@ async fn apply_plan(
             clock: Box::new(SystemClock),
             procs: Box::new(platform::procs::SysinfoProcs),
         };
-        let out = apply(&p, &ApplyOptions { dry_run: false, audit_log: None }, &env, &RealFs);
+        let cfg = ScanConfig::default();
+        let out = apply(
+            &p,
+            &ApplyOptions { dry_run: false, audit_log: None },
+            &cfg,
+            &env,
+            &RealFs,
+        );
 
         let mut lines = Vec::new();
         let mut failed = 0;

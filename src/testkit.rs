@@ -76,7 +76,14 @@ impl TempRepo {
     /// 建一个 worktree，返回其绝对路径。
     pub fn worktree(&self, name: &str, committish: &str) -> PathBuf {
         let p = self.root.join(name);
-        self.git(&["worktree", "add", "-q", "--detach", p.to_str().expect("路径"), committish]);
+        self.git(&[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            p.to_str().expect("路径"),
+            committish,
+        ]);
         p.canonicalize().expect("canonicalize")
     }
 
@@ -119,11 +126,18 @@ pub struct RecordingGit {
 
 impl RecordingGit {
     pub fn new() -> Self {
-        Self { calls: Arc::new(Mutex::new(Vec::new())), fail_matching: None, stdout: Vec::new() }
+        Self {
+            calls: Arc::new(Mutex::new(Vec::new())),
+            fail_matching: None,
+            stdout: Vec::new(),
+        }
     }
 
     pub fn failing(substr: &str, code: i32) -> Self {
-        Self { fail_matching: Some((substr.to_string(), code)), ..Self::new() }
+        Self {
+            fail_matching: Some((substr.to_string(), code)),
+            ..Self::new()
+        }
     }
 
     /// 克隆一份日志句柄，供 apply 之后检查。
@@ -155,7 +169,18 @@ impl crate::git::GitRunner for RecordingGit {
             Some((sub, c)) if joined.contains(sub.as_str()) => Some(*c),
             _ => Some(0),
         };
-        Ok(crate::git::GitExec { code, stdout: self.stdout.clone(), stderr: String::new() })
+        let stdout = if joined.contains("status --porcelain") {
+            self.stdout.clone()
+        } else if joined == "rev-parse HEAD" {
+            b"abc123\n".to_vec()
+        } else {
+            Vec::new()
+        };
+        Ok(crate::git::GitExec {
+            code,
+            stdout,
+            stderr: String::new(),
+        })
     }
 }
 
@@ -167,7 +192,10 @@ pub struct SpyFs {
 
 impl SpyFs {
     pub fn new() -> Self {
-        Self { removed: Mutex::new(Vec::new()), fail: false }
+        Self {
+            removed: Mutex::new(Vec::new()),
+            fail: false,
+        }
     }
 
     pub fn removals(&self) -> Vec<PathBuf> {
@@ -190,7 +218,10 @@ impl crate::fsops::FsOps for SpyFs {
             g.push(path.to_path_buf());
         }
         if self.fail {
-            Err(crate::model::Cause::Io { path: path.to_path_buf(), msg: "spy 故意失败".into() })
+            Err(crate::model::Cause::Io {
+                path: path.to_path_buf(),
+                msg: "spy 故意失败".into(),
+            })
         } else {
             Ok(())
         }

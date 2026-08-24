@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Release quality gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: clippy,rustfmt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Verify tag matches crate version
+        shell: bash
+        run: |
+          crate_version=$(sed -n '/^\[package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml)
+          test "v$crate_version" = "$GITHUB_REF_NAME"
+      - name: Rust quality gates
+        run: |
+          cargo fmt --all --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --all-targets --locked
+      - name: MCP quality gates
+        run: |
+          npm install --global pnpm@10.33.0
+          pnpm --dir mcp install --frozen-lockfile
+          pnpm --dir mcp check
+          git diff --exit-code -- plugins/worktree-gc
+
+  build:
+    name: Build ${{ matrix.label }}
+    needs: quality
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux-x86_64
+            exe: ""
+          - os: macos-13
+            label: macos-x86_64
+            exe: ""
+          - os: macos-14
+            label: macos-aarch64
+            exe: ""
+          - os: windows-latest
+            label: windows-x86_64
+            exe: .exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Build CLI
+        run: cargo build --release --locked --bin wtgc
+      - name: Package CLI and self-contained Codex marketplace
+        shell: bash
+        run: |
+          set -euo pipefail
+          cli_root="dist/worktree-gc-${{ matrix.label }}"
+          codex_root="dist/worktree-gc-codex-${{ matrix.label }}"
+          mkdir -p "$cli_root" "$codex_root/.agents/plugins" "$codex_root/plugins/worktree-gc/bin"
+          cp "target/release/wtgc${{ matrix.exe }}" "$cli_root/"
+          cp README.md README.zh-CN.md LICENSE-MIT LICENSE-APACHE "$cli_root/"
+          cp .agents/plugins/marketplace.json "$codex_root/.agents/plugins/"
+          cp -R plugins/worktree-gc/. "$codex_root/plugins/worktree-gc/"
+          cp "target/release/wtgc${{ matrix.exe }}" "$codex_root/plugins/worktree-gc/bin/"
+          tar -C dist -czf "dist/worktree-gc-${{ matrix.label }}.tar.gz" "worktree-gc-${{ matrix.label }}"
+          tar -C dist -czf "dist/worktree-gc-codex-${{ matrix.label }}.tar.gz" "worktree-gc-codex-${{ matrix.label }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.label }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: artifacts
+          merge-multiple: true
+      - name: Create checksums
+        working-directory: artifacts
+        run: sha256sum *.tar.gz > SHA256SUMS
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" artifacts/* --verify-tag --generate-notes

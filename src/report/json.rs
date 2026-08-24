@@ -17,7 +17,11 @@ mod tests {
     use crate::model::*;
 
     fn empty() -> ScanReport {
-        ScanReport { repos: Vec::new(), available_bytes: 1234, tools: Vec::new() }
+        ScanReport {
+            repos: Vec::new(),
+            available_bytes: 1234,
+            tools: Vec::new(),
+        }
     }
 
     #[test]
@@ -31,9 +35,14 @@ mod tests {
     fn verdict_and_cause_survive_serialization() {
         // 消费者要能区分「拦下」与「判不准」，以及判不准的具体成因。
         // 这两个信息一旦在序列化里塌掉，JSON 输出就失去意义。
-        let v = serde_json::to_value(Verdict::NeedsAttention { unknown: vec![GateId::Busy] })
-            .expect("序列化 Verdict");
-        assert!(v.get("NeedsAttention").is_some(), "判定的种类必须可辨识: {v}");
+        let v = serde_json::to_value(Verdict::NeedsAttention {
+            unknown: vec![GateId::Busy],
+        })
+        .expect("序列化 Verdict");
+        assert!(
+            v.get("NeedsAttention").is_some(),
+            "判定的种类必须可辨识: {v}"
+        );
 
         let c = serde_json::to_value(Cause::ToolMissing { tool: "gh" }).expect("序列化 Cause");
         assert_eq!(c["ToolMissing"]["tool"], "gh", "成因的细节必须保留: {c}");

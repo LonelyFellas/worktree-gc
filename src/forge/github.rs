@@ -47,7 +47,10 @@ impl MergeStatusProvider for GhCli {
                 "number,headRefOid",
             ])
             .output()
-            .map_err(|e| Cause::Io { path: repo.to_path_buf(), msg: e.to_string() })?;
+            .map_err(|e| Cause::Io {
+                path: repo.to_path_buf(),
+                msg: e.to_string(),
+            })?;
 
         if !out.status.success() {
             return Err(Cause::ForgeUnavailable {
@@ -55,17 +58,23 @@ impl MergeStatusProvider for GhCli {
             });
         }
 
-        let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| {
-            Cause::ForgeUnavailable { detail: format!("gh 输出不是合法 JSON: {e}") }
-        })?;
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&out.stdout).map_err(|e| Cause::ForgeUnavailable {
+                detail: format!("gh 输出不是合法 JSON: {e}"),
+            })?;
 
         let Some(items) = parsed.as_array() else {
-            return Err(Cause::ForgeUnavailable { detail: "gh 输出不是数组".into() });
+            return Err(Cause::ForgeUnavailable {
+                detail: "gh 输出不是数组".into(),
+            });
         };
 
         // ← 坑 2：必须逐条比对 headRefOid，不能取 .[0]
         for it in items {
-            let oid = it.get("headRefOid").and_then(|v| v.as_str()).unwrap_or_default();
+            let oid = it
+                .get("headRefOid")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
             if oid == head_oid {
                 let n = it.get("number").and_then(|v| v.as_u64());
                 return Ok(n);

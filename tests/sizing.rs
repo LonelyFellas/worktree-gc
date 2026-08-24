@@ -140,16 +140,26 @@ fn dir_sizes_preserves_input_order() {
 
     assert_eq!(got.len(), paths.len(), "输出条数应与输入一致");
     match &got[0] {
-        Ok(n) => assert!(*n >= 8 * KIB && *n < 8 * KIB + SLACK, "第 0 位应是 small：{n}"),
+        Ok(n) => assert!(
+            *n >= 8 * KIB && *n < 8 * KIB + SLACK,
+            "第 0 位应是 small：{n}"
+        ),
         other => panic!("第 0 位应成功，实际 {other:?}"),
     }
     match &got[1] {
-        Ok(n) => assert!(*n >= 512 * KIB && *n < 512 * KIB + SLACK, "第 1 位应是 big：{n}"),
+        Ok(n) => assert!(
+            *n >= 512 * KIB && *n < 512 * KIB + SLACK,
+            "第 1 位应是 big：{n}"
+        ),
         other => panic!("第 1 位应成功，实际 {other:?}"),
     }
     assert_eq!(got[2], Ok(0), "第 2 位应是空目录");
     // 失败的那位留在原处，不能把成功的结果压紧顶上来。
-    assert!(matches!(&got[3], Err(Cause::Io { .. })), "第 3 位应是错误，实际 {:?}", got[3]);
+    assert!(
+        matches!(&got[3], Err(Cause::Io { .. })),
+        "第 3 位应是错误，实际 {:?}",
+        got[3]
+    );
 }
 
 #[test]

@@ -100,7 +100,11 @@ pub fn expand(git: &dyn GitRunner, at: &Path) -> Result<Discovered, Cause> {
     let (prunable, worktrees): (Vec<WorktreeEntry>, Vec<WorktreeEntry>) =
         entries.into_iter().partition(|e| e.prunable);
 
-    Ok(Discovered { root, worktrees, prunable: prunable.into_iter().map(|e| e.path).collect() })
+    Ok(Discovered {
+        root,
+        worktrees,
+        prunable: prunable.into_iter().map(|e| e.path).collect(),
+    })
 }
 
 /// 发现结果累加器：按主仓根去重，同时保持发现顺序（repos 在前，seeds 在后）。
@@ -172,7 +176,10 @@ fn subdirs(dir: &Path, skip: &[String]) -> Vec<PathBuf> {
         let name = entry.file_name();
         // 跳过表：不为了找仓库去遍历一个 30GB 的 target/。构建产物目录里不会有
         // agent 的工作区，就算有，也该由外层 worktree 的 B4 门禁去管。
-        if skip.iter().any(|d| name.as_os_str() == OsStr::new(d.as_str())) {
+        if skip
+            .iter()
+            .any(|d| name.as_os_str() == OsStr::new(d.as_str()))
+        {
             continue;
         }
         // file_type 不跟随符号链接：跟过去既可能走出种子之外，也可能兜圈子。
@@ -191,5 +198,7 @@ fn subdirs(dir: &Path, skip: &[String]) -> Vec<PathBuf> {
 /// 也不为这一处引第三方依赖。
 fn home_dir() -> Option<PathBuf> {
     let key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-    std::env::var_os(key).map(PathBuf::from).filter(|p| !p.as_os_str().is_empty())
+    std::env::var_os(key)
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
 }

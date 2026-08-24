@@ -19,19 +19,24 @@ pub struct RealFs;
 
 impl FsOps for RealFs {
     fn remove_dir_all(&self, path: &Path) -> Result<(), Cause> {
-        std::fs::remove_dir_all(path)
-            .map_err(|e| Cause::Io { path: path.to_path_buf(), msg: e.to_string() })
+        std::fs::remove_dir_all(path).map_err(|e| Cause::Io {
+            path: path.to_path_buf(),
+            msg: e.to_string(),
+        })
     }
 
     fn create_dir_all(&self, path: &Path) -> Result<(), Cause> {
-        std::fs::create_dir_all(path)
-            .map_err(|e| Cause::Io { path: path.to_path_buf(), msg: e.to_string() })
+        std::fs::create_dir_all(path).map_err(|e| Cause::Io {
+            path: path.to_path_buf(),
+            msg: e.to_string(),
+        })
     }
 
     fn copy_file(&self, from: &Path, to: &Path) -> Result<(), Cause> {
-        std::fs::copy(from, to)
-            .map(|_| ())
-            .map_err(|e| Cause::Io { path: from.to_path_buf(), msg: e.to_string() })
+        std::fs::copy(from, to).map(|_| ()).map_err(|e| Cause::Io {
+            path: from.to_path_buf(),
+            msg: e.to_string(),
+        })
     }
 
     fn exists(&self, path: &Path) -> bool {

@@ -47,7 +47,9 @@ impl MergeStatusProvider for MergedForge {
 struct BrokenForge;
 impl MergeStatusProvider for BrokenForge {
     fn merged_pr(&self, _repo: &Path, _branch: &str, _oid: &str) -> Result<Option<u64>, Cause> {
-        Err(Cause::ForgeUnavailable { detail: "网络不可达".into() })
+        Err(Cause::ForgeUnavailable {
+            detail: "网络不可达".into(),
+        })
     }
 }
 
@@ -55,7 +57,10 @@ impl MergeStatusProvider for BrokenForge {
 struct FailGit;
 impl GitRunner for FailGit {
     fn exec(&self, cwd: &Path, args: &[&str]) -> Result<GitExec, Cause> {
-        Err(Cause::Io { path: cwd.to_path_buf(), msg: format!("git 起不来: {}", args.join(" ")) })
+        Err(Cause::Io {
+            path: cwd.to_path_buf(),
+            msg: format!("git 起不来: {}", args.join(" ")),
+        })
     }
 }
 
@@ -114,7 +119,11 @@ impl Scene {
 
 /// 本地 `main` 作基线（测试仓没有远端，refname 就是 `main`）。
 fn main_baseline() -> Baseline {
-    Baseline { remote: None, branch: "main".into(), source: BaselineSource::Guessed }
+    Baseline {
+        remote: None,
+        branch: "main".into(),
+        source: BaselineSource::Guessed,
+    }
 }
 
 /// 主干一个初始提交 + feature 分支两个提交（改了两个不同文件）。返回分支尖端 oid。
@@ -268,7 +277,9 @@ fn zero_net_change_branch_is_blocked() {
         GateStatus::Blocked(GateDetail::NotLanded { ahead, .. }) => {
             assert_eq!(ahead, 2, "净变更为零但仍有 2 个独有提交，应如实报出");
         }
-        other => panic!("净变更为零的分支不得被判为已落地（内容判据在这里平凡成立），实际 {other:?}"),
+        other => {
+            panic!("净变更为零的分支不得被判为已落地（内容判据在这里平凡成立），实际 {other:?}")
+        }
     }
 }
 

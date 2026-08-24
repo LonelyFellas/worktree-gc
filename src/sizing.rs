@@ -27,7 +27,12 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 目录占用的字节数。
 pub fn dir_size(path: &std::path::Path) -> Result<u64, crate::model::Cause> {
-    walk_size(path, Parallelism::RayonDefaultPool { busy_timeout: BUSY_TIMEOUT })
+    walk_size(
+        path,
+        Parallelism::RayonDefaultPool {
+            busy_timeout: BUSY_TIMEOUT,
+        },
+    )
 }
 
 /// 批量统计，内部并行。顺序与输入一致。
@@ -37,14 +42,19 @@ pub fn dir_sizes(paths: &[std::path::PathBuf]) -> Vec<Result<u64, crate::model::
     // 撞上 jwalk 的忙检测后遍历直接中止。并行度由路径条数提供，够用。
     //
     // par_iter().collect() 对索引型迭代器保序，调用方可以按下标对回输入。
-    paths.par_iter().map(|p| walk_size(p, Parallelism::Serial)).collect()
+    paths
+        .par_iter()
+        .map(|p| walk_size(p, Parallelism::Serial))
+        .collect()
 }
 
 fn walk_size(path: &Path, parallelism: Parallelism) -> Result<u64, Cause> {
     // 根路径本身读不到必须是错误：返回 0 会被上层当成「这里没什么可回收」而静默跳过，
     // 正是要避免的 fail-open 形状。
-    std::fs::symlink_metadata(path)
-        .map_err(|e| Cause::Io { path: path.to_path_buf(), msg: e.to_string() })?;
+    std::fs::symlink_metadata(path).map_err(|e| Cause::Io {
+        path: path.to_path_buf(),
+        msg: e.to_string(),
+    })?;
 
     // 去重集合由本次调用独占 —— dir_sizes 的各个分支之间不共享任何状态，也就不需要锁。
     let mut seen: HashSet<(u64, u64)> = HashSet::new();
@@ -64,7 +74,10 @@ fn walk_size(path: &Path, parallelism: Parallelism) -> Result<u64, Cause> {
             // 线程池占满时 jwalk 会中止遍历，剩下的子树根本没走过。
             // 当成「单个条目失败」跳过就会报出一个荒谬的小数字 —— 必须是整体失败。
             Err(e) if e.is_busy() => {
-                return Err(Cause::Io { path: path.to_path_buf(), msg: e.to_string() });
+                return Err(Cause::Io {
+                    path: path.to_path_buf(),
+                    msg: e.to_string(),
+                });
             }
             // 单个条目失败（权限不足、遍历途中被别的进程删掉）只损失它自己那点体积。
             Err(_) => continue,
@@ -103,7 +116,11 @@ fn probe(meta: &std::fs::Metadata) -> (u64, Option<(u64, u64)>) {
     let bytes = meta.blocks().saturating_mul(512);
     // 只有多链接的文件才可能在同一棵树里被遇到两次。单链接的不进集合，
     // 省掉 node_modules 那种几十万条目规模下的哈希表内存。
-    let id = if meta.nlink() > 1 { Some((meta.dev(), meta.ino())) } else { None };
+    let id = if meta.nlink() > 1 {
+        Some((meta.dev(), meta.ino()))
+    } else {
+        None
+    };
     (bytes, id)
 }
 

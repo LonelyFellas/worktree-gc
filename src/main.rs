@@ -7,10 +7,10 @@ use clap::{Parser, Subcommand};
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
-use wtgc::config::ScanConfig;
-use wtgc::gates::SystemClock;
 use wtgc::apply::{ApplyOptions, Outcome, apply};
+use wtgc::config::ScanConfig;
 use wtgc::fsops::RealFs;
+use wtgc::gates::SystemClock;
 use wtgc::plan::{Selection, plan};
 use wtgc::platform::disk::human_bytes;
 use wtgc::scan::{Env, scan};
@@ -30,6 +30,10 @@ struct Cli {
     /// 额外的种子目录，可重复。默认已含已知的 agent worktree 落点。
     #[arg(long, value_name = "PATH")]
     seed: Vec<PathBuf>,
+
+    /// 不追加默认 agent worktree 落点。与 --repo 配合可严格限制扫描范围。
+    #[arg(long)]
+    no_default_seeds: bool,
 
     /// 输出 JSON。供 agent 与脚本消费。
     #[arg(long)]
@@ -85,11 +89,13 @@ fn main() -> std::process::ExitCode {
     let mut cfg = ScanConfig {
         repos: cli.repo,
         seeds: cli.seed,
-        idle: Duration::from_secs(cli.idle_hours * 3600),
-        cache_quiet: Duration::from_secs(cli.cache_quiet_mins * 60),
+        idle: Duration::from_secs(cli.idle_hours.saturating_mul(3600)),
+        cache_quiet: Duration::from_secs(cli.cache_quiet_mins.saturating_mul(60)),
         ..ScanConfig::default()
     };
-    cfg.seeds.extend(discover::default_seeds());
+    if !cli.no_default_seeds && cfg.repos.is_empty() {
+        cfg.seeds.extend(discover::default_seeds());
+    }
 
     // 拿不到 gh 就走离线判定，而不是让整道 landed 门禁瘫痪。
     // 这里显式告知用户判据降级了——否则他会把"未进主干"误读成事实，
@@ -118,10 +124,10 @@ fn main() -> std::process::ExitCode {
     // 破坏性子命令走另一条路：先算计划，再执行（默认只演练）
     match &cli.cmd {
         Some(Cmd::Reclaim { apply: go }) => {
-            return run_actions(&report, &env, true, false, *go, cli.include_main);
+            return run_actions(&report, &cfg, &env, true, false, *go, cli.include_main);
         }
         Some(Cmd::Remove { apply: go }) => {
-            return run_actions(&report, &env, false, true, *go, cli.include_main);
+            return run_actions(&report, &cfg, &env, false, true, *go, cli.include_main);
         }
         _ => {}
     }
@@ -149,10 +155,7 @@ fn main() -> std::process::ExitCode {
     }
 
     if report.repos.is_empty() {
-        eprintln!(
-            "没有发现任何仓库。用 --repo 指定，或确认种子目录下确实有 agent 建的 worktree。"
-        );
-        return std::process::ExitCode::from(2);
+        eprintln!("没有发现任何仓库。用 --repo 指定，或确认种子目录下确实有 agent 建的 worktree。");
     }
     std::process::ExitCode::SUCCESS
 }
@@ -160,6 +163,7 @@ fn main() -> std::process::ExitCode {
 /// 执行破坏性动作。`dry_run` 是默认值——一个进 crontab 的工具没资格默认删东西。
 fn run_actions(
     report: &wtgc::model::ScanReport,
+    cfg: &ScanConfig,
     env: &Env,
     do_reclaim: bool,
     do_remove: bool,
@@ -168,8 +172,16 @@ fn run_actions(
 ) -> std::process::ExitCode {
     let all = Selection::everything_allowed(report, include_main);
     let sel = Selection {
-        reclaim: if do_reclaim { all.reclaim } else { Default::default() },
-        remove: if do_remove { all.remove } else { Default::default() },
+        reclaim: if do_reclaim {
+            all.reclaim
+        } else {
+            Default::default()
+        },
+        remove: if do_remove {
+            all.remove
+        } else {
+            Default::default()
+        },
         prune: do_remove,
     };
 
@@ -179,9 +191,17 @@ fn run_actions(
         return std::process::ExitCode::SUCCESS;
     }
 
-    println!("计划 {} 项，预计约 {}：", p.actions.len(), human_bytes(p.estimated_bytes()));
+    println!(
+        "计划 {} 项，预计约 {}：",
+        p.actions.len(),
+        human_bytes(p.estimated_bytes())
+    );
     for a in &p.actions {
-        println!("  {} ({})", a.target().display(), human_bytes(a.estimated_bytes()));
+        println!(
+            "  {} ({})",
+            a.target().display(),
+            human_bytes(a.estimated_bytes())
+        );
     }
     for (path, why) in &p.rejected {
         println!("  跳过 {}：{why}", path.display());
@@ -192,7 +212,16 @@ fn run_actions(
         return std::process::ExitCode::SUCCESS;
     }
 
-    let out = apply(&p, &ApplyOptions { dry_run: false, audit_log: None }, env, &RealFs);
+    let out = apply(
+        &p,
+        &ApplyOptions {
+            dry_run: false,
+            audit_log: None,
+        },
+        cfg,
+        env,
+        &RealFs,
+    );
     println!();
     for r in &out.results {
         match &r.outcome {
@@ -212,11 +241,16 @@ fn run_actions(
 
     // 报实测差值而非 du 的估算——APFS 写时复制会让估算系统性偏高
     println!(
-        "\n完成 {} 项，跳过 {} 项。实测释放 {}（估算为 {}）",
+        "\n完成 {} 项，跳过 {} 项，失败 {} 项。实测释放 {}（估算为 {}）",
         out.done_count(),
         out.stale_count(),
+        out.failed_count(),
         human_bytes(out.measured_freed.max(0) as u64),
         human_bytes(out.estimated_freed),
     );
-    std::process::ExitCode::SUCCESS
+    if out.failed_count() > 0 {
+        std::process::ExitCode::from(1)
+    } else {
+        std::process::ExitCode::SUCCESS
+    }
 }

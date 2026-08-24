@@ -31,7 +31,14 @@ impl Gate for DirtyGate {
         // `-uall` 是第二道保险：即便覆盖生效，默认的 `normal` 模式也只报折叠的目录名。
         let changed = match ctx.git.run_ok(
             ctx.worktree,
-            &["-c", "status.showUntrackedFiles=all", "status", "--porcelain=v1", "-z", "-uall"],
+            &[
+                "-c",
+                "status.showUntrackedFiles=all",
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "-uall",
+            ],
         ) {
             Ok(out) => porcelain::parse_status_z(&out.stdout),
             Err(c) => return GateStatus::Unknown(c),
@@ -63,7 +70,10 @@ fn marked_and_modified(ctx: &GateCtx<'_>) -> Result<Vec<String>, Cause> {
     // 与下面 `-z` 读出来的原始路径对不上，整道门白白退化成 Unknown。
     let listing = ctx
         .git
-        .run_ok(ctx.worktree, &["-c", "core.quotePath=false", "ls-files", "-v"])?
+        .run_ok(
+            ctx.worktree,
+            &["-c", "core.quotePath=false", "ls-files", "-v"],
+        )?
         .stdout_utf8();
     let hidden = porcelain::parse_ls_files_marked(&listing);
     if hidden.is_empty() {
@@ -94,7 +104,9 @@ fn index_oids(ctx: &GateCtx<'_>) -> Result<HashMap<String, Vec<String>>, Cause> 
             continue;
         };
         if let Some(oid) = meta.split(' ').nth(1) {
-            map.entry(path.to_string()).or_default().push(oid.to_string());
+            map.entry(path.to_string())
+                .or_default()
+                .push(oid.to_string());
         }
     }
     Ok(map)
@@ -113,7 +125,12 @@ fn differs_from_index(
     match std::fs::symlink_metadata(&abs) {
         Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(true),
-        Err(e) => return Err(Cause::Io { path: abs, msg: e.to_string() }),
+        Err(e) => {
+            return Err(Cause::Io {
+                path: abs,
+                msg: e.to_string(),
+            });
+        }
     }
 
     // quotePath 只管非 ASCII；文件名含换行或引号时 `ls-files -v` 仍会转义，
@@ -128,7 +145,10 @@ fn differs_from_index(
 
     // 用 hash-object 而不是直接比字节：它会按 .gitattributes 的 clean 过滤器与
     // 换行规则算 oid，与索引里存的形态可比。裸比字节会被 autocrlf 之类整批误判成脏。
-    let raw = ctx.git.run_ok(ctx.worktree, &["hash-object", "--", path])?.stdout_utf8();
+    let raw = ctx
+        .git
+        .run_ok(ctx.worktree, &["hash-object", "--", path])?
+        .stdout_utf8();
     let got = raw.trim();
     if got.is_empty() {
         return Err(Cause::CommandFailed {

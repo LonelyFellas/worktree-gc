@@ -54,12 +54,17 @@ export const scanSummarySchema = z.object({
 export type ScanReport = z.infer<typeof scanReportSchema>;
 export type ScanSummary = z.infer<typeof scanSummarySchema>;
 
-const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
+const packageRoot = fileURLToPath(new URL("../", import.meta.url));
+const developmentRoot = fileURLToPath(new URL("../../", import.meta.url));
+const workingRoot = existsSync(join(developmentRoot, "Cargo.toml"))
+  ? developmentRoot
+  : packageRoot;
 
 export function buildWtgcArgs(repos: string[]): string[] {
   return [
     "--json",
     "--offline",
+    ...(repos.length > 0 ? ["--no-default-seeds"] : []),
     ...repos.flatMap((repo) => ["--repo", repo]),
     "scan",
   ];
@@ -90,18 +95,12 @@ export function summarize(report: ScanReport): ScanSummary {
 
 export async function scanWorktrees(repos: string[]): Promise<ScanReport> {
   const developmentBinary = join(
-    repoRoot,
+    developmentRoot,
     "target",
     "debug",
     process.platform === "win32" ? "wtgc.exe" : "wtgc",
   );
-  const binary =
-    process.env.WTGC_BIN ??
-    (existsSync(developmentBinary)
-      ? developmentBinary
-      : process.platform === "win32"
-        ? "wtgc.exe"
-        : "wtgc");
+  const binary = resolveWtgcBinary(developmentBinary);
   const stdout = await run(binary, buildWtgcArgs(repos));
 
   let value: unknown;
@@ -118,13 +117,30 @@ export async function scanWorktrees(repos: string[]): Promise<ScanReport> {
   return parsed.data;
 }
 
+function resolveWtgcBinary(developmentBinary: string): string {
+  const configured = process.env.WTGC_BIN?.trim();
+  if (configured) return configured;
+
+  const name = process.platform === "win32" ? "wtgc.exe" : "wtgc";
+  const candidates = [
+    join(packageRoot, "bin", name),
+    developmentBinary,
+    process.env.CARGO_HOME && join(process.env.CARGO_HOME, "bin", name),
+    process.env.HOME && join(process.env.HOME, ".cargo", "bin", name),
+    process.env.USERPROFILE &&
+      join(process.env.USERPROFILE, ".cargo", "bin", name),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  return candidates.find((candidate) => existsSync(candidate)) ?? name;
+}
+
 function run(binary: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       binary,
       args,
       {
-        cwd: repoRoot,
+        cwd: workingRoot,
         timeout: 5 * 60_000,
         maxBuffer: 32 * 1024 * 1024,
       },
@@ -137,7 +153,7 @@ function run(binary: string, args: string[]): Promise<string> {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {
           reject(
             new Error(
-              `找不到 wtgc 可执行文件 ${binary}。请先运行 cargo install --git https://github.com/LonelyFellas/worktree-gc --locked --bin wtgc，或设置 WTGC_BIN。`,
+              `找不到 wtgc 可执行文件 ${binary}。请先运行 cargo install --git https://github.com/LonelyFellas/worktree-gc --locked --bin wtgc wtgc，或设置 WTGC_BIN。`,
             ),
           );
           return;

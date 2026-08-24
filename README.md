@@ -9,10 +9,31 @@ Reclaim disk space from git worktrees left behind by AI coding agents — **safe
 
 ## Install the Codex plugin
 
-Install the local scanner:
+Requirements:
+
+- Git
+- Node.js 20 or newer
+
+### Prebuilt bundle (recommended)
+
+Download the `worktree-gc-codex-<platform>.tar.gz` asset from
+[GitHub Releases](https://github.com/LonelyFellas/worktree-gc/releases), unpack it,
+then install that directory as a local marketplace:
 
 ```bash
-cargo install --git https://github.com/LonelyFellas/worktree-gc --locked --bin wtgc
+codex plugin marketplace add /absolute/path/to/worktree-gc-codex-<platform>
+codex plugin add worktree-gc@worktree-gc
+```
+
+The platform bundle contains the matching `wtgc` binary, so Rust is not required.
+
+### Install from source
+
+This route additionally requires Rust 1.95 or newer. Install the local scanner
+(the final `wtgc` selects the CLI package from this multi-package repository):
+
+```bash
+cargo install --git https://github.com/LonelyFellas/worktree-gc --locked --bin wtgc wtgc
 ```
 
 Then add the GitHub marketplace and install the plugin:
@@ -64,7 +85,7 @@ Two gate groups for two very different blast radii:
 |---|---|
 | Busy | No process has its cwd or executable inside the worktree |
 | Recent | The cache directory itself has been quiet for N minutes |
-| CacheSafe | Ignored by git · contains no tracked files · inside the worktree root · not a symlink · matches a known cache rule |
+| CacheSafe | Ignored by git · contains no tracked files · inside the worktree root · not a symlink · matches a known cache rule and ecosystem marker |
 
 **B — remove the whole worktree** (A plus six more)
 
@@ -94,7 +115,10 @@ something wrong can cost work that exists nowhere else. Every trade-off leans to
 
 ```bash
 cargo test
-cargo clippy --all-targets
+cargo fmt --all --check
+cargo clippy --all-targets --locked -- -D warnings
+pnpm --dir mcp check
+pnpm --dir gui build
 ```
 
 Tests build **real git repositories** rather than mocking git. Every genuine bug this project

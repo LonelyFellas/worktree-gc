@@ -11,9 +11,12 @@ pub mod exe;
 pub mod porcelain;
 
 use crate::model::Cause;
+use std::io::Read;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::thread;
 use std::time::Duration;
+use wait_timeout::ChildExt;
 
 /// 一次 git 调用的原始结果。
 ///
@@ -89,17 +92,108 @@ impl GitRunner for RealGit {
         cmd.current_dir(cwd)
             .args(args)
             .env("GIT_TERMINAL_PROMPT", "0") // 绝不因为等凭据输入而挂住
-            .env("GIT_OPTIONAL_LOCKS", "0"); // 只读操作不去抢索引锁
+            .env("GIT_OPTIONAL_LOCKS", "0") // 只读操作不去抢索引锁
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
-        let _ = self.timeout; // TODO(timeout): 用 wait-timeout 包一层，见 tests/cli_timeout.rs
+        let mut child = cmd.spawn().map_err(|e| Cause::Io {
+            path: cwd.to_path_buf(),
+            msg: e.to_string(),
+        })?;
+        let stdout = child.stdout.take().ok_or_else(|| Cause::Io {
+            path: cwd.to_path_buf(),
+            msg: "无法捕获 git stdout".into(),
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| Cause::Io {
+            path: cwd.to_path_buf(),
+            msg: "无法捕获 git stderr".into(),
+        })?;
 
-        match cmd.output() {
-            Ok(o) => Ok(GitExec {
-                code: o.status.code(),
-                stdout: o.stdout,
-                stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
-            }),
-            Err(e) => Err(Cause::Io { path: cwd.to_path_buf(), msg: e.to_string() }),
-        }
+        // 输出必须并行排空；先 wait 再读会在子进程写满 pipe 时互相等待。
+        let stdout_reader = thread::spawn(move || {
+            let mut reader = stdout;
+            let mut bytes = Vec::new();
+            reader.read_to_end(&mut bytes).map(|_| bytes)
+        });
+        let stderr_reader = thread::spawn(move || {
+            let mut reader = stderr;
+            let mut bytes = Vec::new();
+            reader.read_to_end(&mut bytes).map(|_| bytes)
+        });
+
+        let cmd_text = format!("git {}", args.join(" "));
+        let status = match child.wait_timeout(self.timeout) {
+            Ok(Some(status)) => status,
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Err(Cause::Timeout {
+                    cmd: cmd_text,
+                    secs: self.timeout.as_secs().max(1),
+                });
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Err(Cause::Io {
+                    path: cwd.to_path_buf(),
+                    msg: e.to_string(),
+                });
+            }
+        };
+
+        let stdout = join_output(stdout_reader, cwd, "stdout")?;
+        let stderr = join_output(stderr_reader, cwd, "stderr")?;
+        Ok(GitExec {
+            code: status.code(),
+            stdout,
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        })
+    }
+}
+
+fn join_output(
+    handle: thread::JoinHandle<std::io::Result<Vec<u8>>>,
+    cwd: &Path,
+    stream: &str,
+) -> Result<Vec<u8>, Cause> {
+    match handle.join() {
+        Ok(Ok(bytes)) => Ok(bytes),
+        Ok(Err(e)) => Err(Cause::Io {
+            path: cwd.to_path_buf(),
+            msg: e.to_string(),
+        }),
+        Err(_) => Err(Cause::Io {
+            path: cwd.to_path_buf(),
+            msg: format!("读取 git {stream} 的线程异常终止"),
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GitRunner, RealGit};
+    use crate::model::Cause;
+    use std::time::{Duration, Instant};
+
+    #[cfg(unix)]
+    #[test]
+    fn command_timeout_is_enforced() {
+        let git = RealGit::new("/bin/sh".into(), Duration::from_millis(100));
+        let started = Instant::now();
+        let result = git.exec(std::path::Path::new("/"), &["-c", "sleep 5"]);
+
+        assert!(
+            matches!(result, Err(Cause::Timeout { .. })),
+            "实际结果：{result:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "超时配置没有生效"
+        );
     }
 }

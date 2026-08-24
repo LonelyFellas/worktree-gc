@@ -26,7 +26,10 @@ fn render_repo(repo: &RepoReport, w: &mut dyn Write) -> Result<()> {
             if let Some(c) = &repo.baseline_error {
                 writeln!(w, "     └ {}", describe_cause(c))?;
             }
-            writeln!(w, "     用 --repo 配合显式基线，或检查该仓是否有可用的远端 HEAD")?;
+            writeln!(
+                w,
+                "     用 --repo 配合显式基线，或检查该仓是否有可用的远端 HEAD"
+            )?;
             return Ok(());
         }
     }
@@ -35,7 +38,11 @@ fn render_repo(repo: &RepoReport, w: &mut dyn Write) -> Result<()> {
         render_worktree(wt, w)?;
     }
     if !repo.prunable.is_empty() {
-        writeln!(w, "  🧹 有 {} 条陈旧注册记录（目录已消失）", repo.prunable.len())?;
+        writeln!(
+            w,
+            "  🧹 有 {} 条陈旧注册记录（目录已消失）",
+            repo.prunable.len()
+        )?;
     }
     Ok(())
 }
@@ -58,9 +65,12 @@ fn render_worktree(wt: &WorktreeReport, w: &mut dyn Write) -> Result<()> {
     for o in &wt.outcomes {
         match &o.status {
             GateStatus::Blocked(d) => writeln!(w, "       └ {}", describe_detail(d))?,
-            GateStatus::Unknown(c) => {
-                writeln!(w, "       ❓ {} 判不准：{}", o.id.as_str(), describe_cause(c))?
-            }
+            GateStatus::Unknown(c) => writeln!(
+                w,
+                "       ❓ {} 判不准：{}",
+                o.id.as_str(),
+                describe_cause(c)
+            )?,
             _ => {}
         }
     }
@@ -70,22 +80,36 @@ fn render_worktree(wt: &WorktreeReport, w: &mut dyn Write) -> Result<()> {
         let blockers: Vec<&GateOutcome> =
             c.outcomes.iter().filter(|o| !o.status.is_pass()).collect();
         if blockers.is_empty() {
-            writeln!(w, "       💡 可回收 {}/ ({})", c.kind.name, human_bytes(c.bytes))?;
+            writeln!(
+                w,
+                "       💡 可回收 {}/ ({})",
+                c.kind.name,
+                human_bytes(c.bytes)
+            )?;
         } else if let Some(first) = blockers.first() {
             let why = match &first.status {
                 GateStatus::Blocked(d) => describe_detail(d),
                 GateStatus::Unknown(c) => format!("判不准：{}", describe_cause(c)),
                 _ => "不适用".into(),
             };
-            writeln!(w, "       ⛔ {}/ ({}) 暂不回收：{why}", c.kind.name, human_bytes(c.bytes))?;
+            writeln!(
+                w,
+                "       ⛔ {}/ ({}) 暂不回收：{why}",
+                c.kind.name,
+                human_bytes(c.bytes)
+            )?;
         }
     }
     Ok(())
 }
 
 fn render_summary(report: &ScanReport, w: &mut dyn Write) -> Result<()> {
-    let reclaimable: u64 =
-        report.repos.iter().flat_map(|r| &r.worktrees).map(|wt| wt.reclaimable_bytes()).sum();
+    let reclaimable: u64 = report
+        .repos
+        .iter()
+        .flat_map(|r| &r.worktrees)
+        .map(|wt| wt.reclaimable_bytes())
+        .sum();
     let removable: u64 = report
         .repos
         .iter()
@@ -103,7 +127,12 @@ fn render_summary(report: &ScanReport, w: &mut dyn Write) -> Result<()> {
     writeln!(w)?;
     // 标「约」不是谦虚：APFS 的写时复制会让 du 口径系统性高估，
     // 真实回收量以执行前后的可用空间差值为准。
-    writeln!(w, "约可回收构建缓存 {}，可删除 worktree {}", human_bytes(reclaimable), human_bytes(removable))?;
+    writeln!(
+        w,
+        "约可回收构建缓存 {}，可删除 worktree {}",
+        human_bytes(reclaimable),
+        human_bytes(removable)
+    )?;
     if unclear > 0 {
         writeln!(w, "有 {unclear} 个判不准，已列出缺失的能力——补齐后再跑一次")?;
     }
@@ -138,9 +167,15 @@ fn describe_detail(d: &GateDetail) -> String {
             format!("最近 {} 分钟内仍有写入", age_secs / 60)
         }
         GateDetail::NotPureCache { reason } => match reason {
+            CacheUnsafeReason::MissingMarker { expected } => {
+                format!("缺少项目佐证文件（需要其一：{}）", expected.join("、"))
+            }
             CacheUnsafeReason::NotIgnored => "该目录未被 gitignore，可能不是构建产物".into(),
             CacheUnsafeReason::ContainsTrackedFiles { sample } => {
-                format!("目录内有被 git 跟踪的文件（如 {}），删了不可恢复", sample.join(", "))
+                format!(
+                    "目录内有被 git 跟踪的文件（如 {}），删了不可恢复",
+                    sample.join(", ")
+                )
             }
             CacheUnsafeReason::IsSymlink => "是符号链接，删它会波及链接目标".into(),
             CacheUnsafeReason::EscapesWorktree { resolved } => {
@@ -155,12 +190,18 @@ fn describe_detail(d: &GateDetail) -> String {
             format!("工作未进主干（领先 {baseline} {ahead} 个提交）")
         }
         GateDetail::PreciousFiles { paths } => {
-            let names: Vec<_> =
-                paths.iter().take(3).map(|p| p.display().to_string()).collect();
+            let names: Vec<_> = paths
+                .iter()
+                .take(3)
+                .map(|p| p.display().to_string())
+                .collect();
             format!("含主仓没有或内容不同的敏感文件：{}", names.join(", "))
         }
         GateDetail::NestedWorktrees { paths } => {
-            format!("内部嵌套了 {} 个其它工作区，删外层会连它们一起灭", paths.len())
+            format!(
+                "内部嵌套了 {} 个其它工作区，删外层会连它们一起灭",
+                paths.len()
+            )
         }
         GateDetail::OperationInProgress { kind } => {
             format!("正处于 {kind} 中间态，删除会销毁进行中的状态")
@@ -176,7 +217,15 @@ fn describe_cause(c: &Cause) -> String {
     match c {
         Cause::CommandFailed { cmd, code, stderr } => {
             let tail = stderr.lines().next().unwrap_or("").trim();
-            format!("`{cmd}` 退出码 {:?}{}", code, if tail.is_empty() { String::new() } else { format!("：{tail}") })
+            format!(
+                "`{cmd}` 退出码 {:?}{}",
+                code,
+                if tail.is_empty() {
+                    String::new()
+                } else {
+                    format!("：{tail}")
+                }
+            )
         }
         Cause::Timeout { cmd, secs } => format!("`{cmd}` 超过 {secs} 秒未返回"),
         Cause::Unsupported { what, platform } => {

@@ -61,6 +61,7 @@ fn ctx<'a>(
 fn tracked_files_block_cache_reclamation() {
     let r = TempRepo::new();
     r.write(".gitignore", "target/\n");
+    r.write("package.json", "{\"name\":\"x\"}\n");
     r.write("dist/bundle.js", "// 这是入库的产物，不是缓存");
     r.write("a.txt", "x");
     r.commit("init");
@@ -110,9 +111,45 @@ fn plain_ignored_target_passes() {
     let c = ctx(&r, &wt, &head, &cfg, &git, &procs, &clock, &forge);
 
     assert_eq!(
-        CacheSafeGate { dir: "target".into() }.evaluate(&c),
+        CacheSafeGate {
+            dir: "target".into()
+        }
+        .evaluate(&c),
         GateStatus::Pass,
         "纯忽略产物应放行"
+    );
+}
+
+/// 同名目录和 gitignore 都不是充分证据：没有 Cargo.toml 的 `target/` 可能是用户资料。
+#[test]
+fn ignored_target_without_rust_marker_is_blocked() {
+    let r = TempRepo::new();
+    r.write(".gitignore", "target/\n");
+    r.write("a.txt", "x");
+    r.commit("init");
+    let wt = r.worktree("wt", &r.head());
+    std::fs::create_dir_all(wt.join("target")).expect("建 target");
+    std::fs::write(wt.join("target/notes.txt"), "不可重建的资料").expect("写资料");
+
+    let cfg = ScanConfig::default();
+    let git = test_git();
+    let procs = FakeProcs(Ok(vec![]));
+    let clock = FixedClock(SystemTime::now());
+    let forge = NoForge;
+    let head = r.head();
+    let c = ctx(&r, &wt, &head, &cfg, &git, &procs, &clock, &forge);
+
+    assert!(
+        matches!(
+            CacheSafeGate {
+                dir: "target".into()
+            }
+            .evaluate(&c),
+            GateStatus::Blocked(GateDetail::NotPureCache {
+                reason: CacheUnsafeReason::MissingMarker { .. }
+            })
+        ),
+        "缺少 Cargo.toml 时不能把 target 当作 Rust 缓存"
     );
 }
 
@@ -140,8 +177,13 @@ fn symlinked_cache_is_blocked() {
 
     assert!(
         matches!(
-            CacheSafeGate { dir: "target".into() }.evaluate(&c),
-            GateStatus::Blocked(GateDetail::NotPureCache { reason: CacheUnsafeReason::IsSymlink })
+            CacheSafeGate {
+                dir: "target".into()
+            }
+            .evaluate(&c),
+            GateStatus::Blocked(GateDetail::NotPureCache {
+                reason: CacheUnsafeReason::IsSymlink
+            })
         ),
         "符号链接必须被拦下"
     );
@@ -167,7 +209,10 @@ fn freshly_written_cache_is_blocked_by_recency() {
 
     assert!(
         matches!(
-            RecentGate { dir: "target".into() }.evaluate(&c),
+            RecentGate {
+                dir: "target".into()
+            }
+            .evaluate(&c),
             GateStatus::Blocked(GateDetail::RecentlyModified { .. })
         ),
         "刚写过的缓存不该放行"
@@ -193,7 +238,10 @@ fn quiet_cache_passes_recency() {
     let c = ctx(&r, &wt, &head, &cfg, &git, &procs, &clock, &forge);
 
     assert_eq!(
-        RecentGate { dir: "target".into() }.evaluate(&c),
+        RecentGate {
+            dir: "target".into()
+        }
+        .evaluate(&c),
         GateStatus::Pass,
         "安静足够久的缓存应放行"
     );

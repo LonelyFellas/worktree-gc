@@ -31,7 +31,10 @@ impl Selection {
     /// （实测一个 378 个依赖的 Rust 项目冷编译要 5–15 分钟），
     /// 不该和 agent 用完即弃的 worktree 同等对待。要清得显式说。
     pub fn everything_allowed(report: &ScanReport, include_main: bool) -> Self {
-        let mut sel = Selection { prune: true, ..Default::default() };
+        let mut sel = Selection {
+            prune: true,
+            ..Default::default()
+        };
         for repo in &report.repos {
             for wt in &repo.worktrees {
                 if matches!(wt.verdict, Verdict::Removable) {
@@ -134,9 +137,10 @@ pub fn plan(report: &ScanReport, sel: &Selection) -> Plan {
                         bytes: c.bytes,
                         expect: wt.fingerprint.clone(),
                     }),
-                    Some(blocker) => out
-                        .rejected
-                        .push((c.path.clone(), format!("门禁 {} 未通过", blocker.id.as_str()))),
+                    Some(blocker) => out.rejected.push((
+                        c.path.clone(),
+                        format!("门禁 {} 未通过", blocker.id.as_str()),
+                    )),
                 }
             }
 
@@ -173,7 +177,11 @@ fn describe_verdict(v: &Verdict) -> String {
         ),
         Verdict::NeedsAttention { unknown } => format!(
             "判不准（{}），不放行",
-            unknown.iter().map(|g| g.as_str()).collect::<Vec<_>>().join("、")
+            unknown
+                .iter()
+                .map(|g| g.as_str())
+                .collect::<Vec<_>>()
+                .join("、")
         ),
         Verdict::Protected { why } => format!("受保护：{why}"),
         Verdict::CacheReclaimable => "只能回收缓存，不能整个删除".into(),

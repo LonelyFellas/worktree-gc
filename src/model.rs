@@ -88,6 +88,8 @@ pub enum GateDetail {
 /// A3 门禁拒绝的具体理由。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum CacheUnsafeReason {
+    /// 缺少生态佐证文件，无法证明同名目录真的是该生态的构建产物。
+    MissingMarker { expected: Vec<String> },
     /// 目录未被 gitignore —— 说明它可能是源码而非产物。
     NotIgnored,
     /// 目录内存在被 git 跟踪的文件（比如入库的 `dist/`），删了就是永久损失。
@@ -105,11 +107,18 @@ pub enum CacheUnsafeReason {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum Cause {
     /// 子命令非零退出。stderr 原样保留用于展示与归因。
-    CommandFailed { cmd: String, code: Option<i32>, stderr: String },
+    CommandFailed {
+        cmd: String,
+        code: Option<i32>,
+        stderr: String,
+    },
     /// 子命令超时。
     Timeout { cmd: String, secs: u64 },
     /// 本平台不具备这项能力（如 Windows 上拿不到进程 cwd）。
-    Unsupported { what: &'static str, platform: &'static str },
+    Unsupported {
+        what: &'static str,
+        platform: &'static str,
+    },
     /// 依赖的外部程序不存在（如未装 gh）。
     ToolMissing { tool: &'static str },
     /// 网络不可达或未鉴权，判据被迫降级。
@@ -166,8 +175,11 @@ impl Verdict {
     pub fn from_outcomes(cache: &[GateOutcome], remove: Option<&[GateOutcome]>) -> Verdict {
         let all: Vec<&GateOutcome> = cache.iter().chain(remove.unwrap_or(&[]).iter()).collect();
 
-        let unknown: Vec<GateId> =
-            all.iter().filter(|o| o.status.is_unknown()).map(|o| o.id).collect();
+        let unknown: Vec<GateId> = all
+            .iter()
+            .filter(|o| o.status.is_unknown())
+            .map(|o| o.id)
+            .collect();
         if !unknown.is_empty() {
             return Verdict::NeedsAttention { unknown };
         }

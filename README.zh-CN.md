@@ -9,10 +9,30 @@
 
 ## 安装 Codex 插件
 
-先安装本地扫描器：
+环境要求：
+
+- Git
+- Node.js 20 或更高版本
+
+### 预编译包（推荐）
+
+从 [GitHub Releases](https://github.com/LonelyFellas/worktree-gc/releases) 下载
+`worktree-gc-codex-<platform>.tar.gz`，解压后把该目录作为本地 marketplace 安装：
 
 ```bash
-cargo install --git https://github.com/LonelyFellas/worktree-gc --locked --bin wtgc
+codex plugin marketplace add /绝对路径/worktree-gc-codex-<platform>
+codex plugin add worktree-gc@worktree-gc
+```
+
+平台包已包含匹配的 `wtgc` 二进制，因此不需要安装 Rust。
+
+### 从源码安装
+
+这种方式还需要 Rust 1.95 或更高版本。先安装本地扫描器（末尾的 `wtgc`
+用于从这个多包仓库中明确选择 CLI 包）：
+
+```bash
+cargo install --git https://github.com/LonelyFellas/worktree-gc --locked --bin wtgc wtgc
 ```
 
 再添加 GitHub marketplace 并安装插件：
@@ -63,7 +83,7 @@ AI coding agent（Claude Code、Codex、Cursor 等）会为每个任务开一个
 |---|---|
 | Busy | 没有进程的工作目录或可执行文件位于该 worktree 内 |
 | Recent | 缓存目录本身已安静 N 分钟 |
-| CacheSafe | 被 git 忽略 · 不含任何 tracked 文件 · 位于 worktree 根内 · 非符号链接 · 匹配已知缓存规则 |
+| CacheSafe | 被 git 忽略 · 不含任何 tracked 文件 · 位于 worktree 根内 · 非符号链接 · 匹配已知缓存规则及生态 marker |
 
 **B 组 —— 删除整个 worktree**（A 组之上再加六道）
 
@@ -93,7 +113,10 @@ AI coding agent（Claude Code、Codex、Cursor 等）会为每个任务开一个
 
 ```bash
 cargo test
-cargo clippy --all-targets
+cargo fmt --all --check
+cargo clippy --all-targets --locked -- -D warnings
+pnpm --dir mcp check
+pnpm --dir gui build
 ```
 
 测试**构造真实的 git 仓库**，而不是 mock git。这个项目遇到的每一个真实 bug

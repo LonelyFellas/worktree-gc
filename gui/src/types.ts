@@ -15,6 +15,7 @@ export type Cause =
 
 export type CacheUnsafeReason =
   | "NotIgnored" | "IsSymlink" | "NoMatchingRule"
+  | { MissingMarker: { expected: string[] } }
   | { ContainsTrackedFiles: { sample: string[] } }
   | { EscapesWorktree: { resolved: string } };
 

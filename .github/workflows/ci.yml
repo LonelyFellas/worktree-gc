@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: clippy,rustfmt
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --all-targets --locked
+
+  javascript:
+    name: MCP and GUI frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install pnpm
+        run: npm install --global pnpm@10.33.0
+      - name: Install MCP dependencies
+        run: pnpm --dir mcp install --frozen-lockfile
+      - name: Check MCP and generated plugin bundle
+        run: pnpm --dir mcp check
+      - name: Verify generated plugin files are committed
+        run: git diff --exit-code -- plugins/worktree-gc
+      - name: Install GUI dependencies
+        run: pnpm --dir gui install --frozen-lockfile
+      - name: Build GUI frontend
+        run: pnpm --dir gui build
+
+  gui-backend:
+    name: GUI backend (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Check Tauri backend
+        run: cargo check --manifest-path gui/src-tauri/Cargo.toml --locked

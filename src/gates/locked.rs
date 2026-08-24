@@ -21,7 +21,10 @@ impl Gate for LockedGate {
     }
 
     fn evaluate(&self, ctx: &GateCtx<'_>) -> GateStatus {
-        let out = match ctx.git.run_ok(ctx.repo, &["worktree", "list", "--porcelain"]) {
+        let out = match ctx
+            .git
+            .run_ok(ctx.repo, &["worktree", "list", "--porcelain"])
+        {
             Ok(o) => o,
             // 拿不到注册表就等于不知道锁没锁。这里返回 Pass 就是 D7 的 fail-open。
             Err(c) => return GateStatus::Unknown(c),

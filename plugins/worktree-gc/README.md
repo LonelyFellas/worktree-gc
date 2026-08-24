@@ -6,14 +6,17 @@ worktree.
 
 ## Requirement
 
-Install the `wtgc` CLI first:
+Install Git and Node.js 20 or newer. Official platform release bundles include
+the scanner under `bin/`. When installing directly from the Git marketplace,
+also install Rust 1.95 or newer and then install the `wtgc` CLI:
 
 ```bash
-cargo install --git https://github.com/LonelyFellas/worktree-gc --locked --bin wtgc
+cargo install --git https://github.com/LonelyFellas/worktree-gc --locked --bin wtgc wtgc
 ```
 
-Set `WTGC_BIN` before starting Codex if the binary is not available as `wtgc` in
-`PATH`.
+The plugin also checks `CARGO_HOME/bin`, `~/.cargo/bin`, and the equivalent
+Windows user-profile path. Set `WTGC_BIN` before starting Codex for a custom
+installation location.
 
 ## Install from GitHub
 

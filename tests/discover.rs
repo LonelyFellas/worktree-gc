@@ -21,12 +21,23 @@ fn repo_with_commit() -> TempRepo {
 /// 在任意绝对路径处挂一个该仓的 linked worktree（`TempRepo::worktree` 只能挂在仓内）。
 fn worktree_at(r: &TempRepo, at: &Path) -> PathBuf {
     let head = r.head();
-    r.git(&["worktree", "add", "-q", "--detach", at.to_str().expect("路径"), &head]);
+    r.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "--detach",
+        at.to_str().expect("路径"),
+        &head,
+    ]);
     at.canonicalize().expect("canonicalize")
 }
 
 fn cfg(repos: Vec<PathBuf>, seeds: Vec<PathBuf>) -> ScanConfig {
-    ScanConfig { repos, seeds, ..ScanConfig::default() }
+    ScanConfig {
+        repos,
+        seeds,
+        ..ScanConfig::default()
+    }
 }
 
 fn roots(found: &[wtgc::discover::Discovered]) -> Vec<PathBuf> {
@@ -42,11 +53,18 @@ fn explicit_repo_expands_whole_family() {
 
     let found = discover(&cfg(vec![r.root.clone()], vec![]), &test_git());
 
-    assert_eq!(roots(&found), vec![r.root.clone()], "应当只发现这一个仓，且 root 是主仓根");
+    assert_eq!(
+        roots(&found),
+        vec![r.root.clone()],
+        "应当只发现这一个仓，且 root 是主仓根"
+    );
     let paths: Vec<PathBuf> = found[0].worktrees.iter().map(|w| w.path.clone()).collect();
     assert_eq!(paths.len(), 3, "主 worktree + 两个 linked，实际 {paths:?}");
     assert_eq!(paths[0], r.root, "主 worktree 必须是首条");
-    assert!(paths.contains(&wt1) && paths.contains(&wt2), "两个 linked 都要在，实际 {paths:?}");
+    assert!(
+        paths.contains(&wt1) && paths.contains(&wt2),
+        "两个 linked 都要在，实际 {paths:?}"
+    );
     assert!(found[0].prunable.is_empty(), "没有陈旧记录");
 }
 
@@ -58,7 +76,11 @@ fn expanding_from_a_linked_worktree_yields_the_main_root() {
 
     let found = discover(&cfg(vec![wt], vec![]), &test_git());
 
-    assert_eq!(roots(&found), vec![r.root.clone()], "root 应是主仓根而非被指定的那个 worktree");
+    assert_eq!(
+        roots(&found),
+        vec![r.root.clone()],
+        "root 应是主仓根而非被指定的那个 worktree"
+    );
 }
 
 /// 目录被删掉、注册记录还在的 worktree 归入 prunable，不混进 worktrees——
@@ -74,8 +96,17 @@ fn prunable_entries_are_separated() {
 
     assert_eq!(found.len(), 1);
     let paths: Vec<PathBuf> = found[0].worktrees.iter().map(|w| w.path.clone()).collect();
-    assert_eq!(paths, vec![r.root.clone(), alive], "已消失的那个不该出现在 worktrees 里");
-    assert_eq!(found[0].prunable.len(), 1, "陈旧记录应当被单独收走，实际 {:?}", found[0].prunable);
+    assert_eq!(
+        paths,
+        vec![r.root.clone(), alive],
+        "已消失的那个不该出现在 worktrees 里"
+    );
+    assert_eq!(
+        found[0].prunable.len(),
+        1,
+        "陈旧记录应当被单独收走，实际 {:?}",
+        found[0].prunable
+    );
     assert!(
         found[0].prunable[0].ends_with("gone"),
         "prunable 记的应是消失的那个路径，实际 {:?}",
@@ -91,11 +122,18 @@ fn seed_scan_finds_worktree_whose_dot_git_is_a_file() {
     let seed_root = seed.path().canonicalize().expect("canonicalize");
     let wt = worktree_at(&r, &seed_root.join("agent-a"));
 
-    assert!(wt.join(".git").is_file(), "前提：linked worktree 的 .git 是文件");
+    assert!(
+        wt.join(".git").is_file(),
+        "前提：linked worktree 的 .git 是文件"
+    );
 
     let found = discover(&cfg(vec![], vec![seed_root]), &test_git());
 
-    assert_eq!(roots(&found), vec![r.root.clone()], "种子里的 worktree 应解析回主仓根");
+    assert_eq!(
+        roots(&found),
+        vec![r.root.clone()],
+        "种子里的 worktree 应解析回主仓根"
+    );
 }
 
 /// 同一个仓既被显式声明、又被种子扫到，只出现一次。
@@ -109,8 +147,17 @@ fn repo_listed_and_seeded_appears_once() {
 
     let found = discover(&cfg(vec![r.root.clone()], vec![seed_root]), &test_git());
 
-    assert_eq!(roots(&found), vec![r.root.clone()], "去重后只该有一条，实际 {:?}", roots(&found));
-    assert_eq!(found[0].worktrees.len(), 3, "全家仍应完整：主 + 两个 agent worktree");
+    assert_eq!(
+        roots(&found),
+        vec![r.root.clone()],
+        "去重后只该有一条，实际 {:?}",
+        roots(&found)
+    );
+    assert_eq!(
+        found[0].worktrees.len(),
+        3,
+        "全家仍应完整：主 + 两个 agent worktree"
+    );
 }
 
 /// 种子目录里的普通目录不该被当成仓库。
@@ -124,7 +171,11 @@ fn plain_directories_are_not_reported_as_repos() {
 
     let found = discover(&cfg(vec![], vec![base.to_path_buf()]), &test_git());
 
-    assert!(found.is_empty(), "普通目录不该产生仓库，实际 {:?}", roots(&found));
+    assert!(
+        found.is_empty(),
+        "普通目录不该产生仓库，实际 {:?}",
+        roots(&found)
+    );
 }
 
 /// 剪枝：命中 `.git` 后不再下探。
@@ -165,7 +216,11 @@ fn seed_scan_is_depth_limited() {
 
     let found = discover(&cfg(vec![], vec![seed_root]), &test_git());
 
-    assert!(found.is_empty(), "超出深度限制的仓库不该被发现，实际 {:?}", roots(&found));
+    assert!(
+        found.is_empty(),
+        "超出深度限制的仓库不该被发现，实际 {:?}",
+        roots(&found)
+    );
 }
 
 /// 跳过表生效：不为了找仓库去遍历构建产物目录。
@@ -180,7 +235,11 @@ fn build_output_directories_are_skipped() {
 
     let found = discover(&cfg(vec![], vec![seed_root]), &test_git());
 
-    assert!(found.is_empty(), "target/ 下面不该去遍历，实际 {:?}", roots(&found));
+    assert!(
+        found.is_empty(),
+        "target/ 下面不该去遍历，实际 {:?}",
+        roots(&found)
+    );
 }
 
 /// 一个仓出错不能让整轮发现失败。
@@ -196,7 +255,11 @@ fn a_bad_path_does_not_sink_the_rest() {
     ];
     let found = discover(&cfg(repos, vec![]), &test_git());
 
-    assert_eq!(roots(&found), vec![r.root.clone()], "好的那个仓必须照样发现");
+    assert_eq!(
+        roots(&found),
+        vec![r.root.clone()],
+        "好的那个仓必须照样发现"
+    );
 }
 
 /// 种子目录本身就是工作区的情形（`~/.codex/worktrees` 被直接指到某个 worktree 上）。
@@ -214,10 +277,15 @@ fn the_seed_directory_itself_can_be_a_workspace() {
 fn default_seeds_are_existing_directories() {
     let seeds = default_seeds();
 
-    assert!(seeds.iter().all(|p| p.is_dir()), "不该返回不存在的路径，实际 {seeds:?}");
+    assert!(
+        seeds.iter().all(|p| p.is_dir()),
+        "不该返回不存在的路径，实际 {seeds:?}"
+    );
     let tmp = std::env::temp_dir().canonicalize().expect("canonicalize");
     assert!(
-        seeds.iter().any(|p| p.canonicalize().map(|c| c == tmp).unwrap_or(false)),
+        seeds
+            .iter()
+            .any(|p| p.canonicalize().map(|c| c == tmp).unwrap_or(false)),
         "$TMPDIR 是已知的 agent 落点，实际 {seeds:?}"
     );
 }

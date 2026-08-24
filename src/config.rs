@@ -34,11 +34,23 @@ impl CacheRule {
             CacheRule::new("dist", "node", &["package.json"]),
             CacheRule::new(".next", "node", &["package.json"]),
             CacheRule::new(".turbo", "node", &["package.json"]),
-            CacheRule::new("build", "generic", &[]),
             CacheRule::new(".venv", "python", &["pyproject.toml"]),
             CacheRule::new("__pycache__", "python", &[]),
-            CacheRule::new(".gradle", "jvm", &["build.gradle"]),
+            CacheRule::new(".gradle", "jvm", &["build.gradle", "build.gradle.kts"]),
         ]
+    }
+
+    /// 候选目录还必须有生态佐证文件。`target/`、`dist/` 之类的名字太常见，
+    /// 只凭名字和 gitignore 无法证明里面一定是可重建产物。
+    pub fn has_marker_for(&self, worktree: &std::path::Path, cache_rel: &std::path::Path) -> bool {
+        let owner = cache_rel
+            .parent()
+            .map_or_else(|| worktree.to_path_buf(), |parent| worktree.join(parent));
+        self.markers.is_empty()
+            || self
+                .markers
+                .iter()
+                .any(|marker| owner.join(marker).is_file())
     }
 }
 
@@ -75,7 +87,10 @@ impl Default for PreciousPolicy {
 pub enum BaseBranchPolicy {
     /// 自动探测：remote HEAD → 常见名 → 失败则整仓标红（**不静默跳过**，见 D12）。
     Auto,
-    Explicit { remote: Option<String>, branch: String },
+    Explicit {
+        remote: Option<String>,
+        branch: String,
+    },
 }
 
 /// 是否刷新远端引用。

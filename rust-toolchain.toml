@@ -1,4 +1,4 @@
 # 不钉死小版本：这是面向外部贡献者的开源项目，钉太死会把 CI 与贡献者的本地环境割裂。
-# MSRV 在 Cargo.toml 的 rust-version 声明（1.85，edition 2024 的下限）。
+# MSRV 在 Cargo.toml 的 rust-version 声明（1.95，当前依赖树的实际下限）。
 [toolchain]
 channel = "stable"
