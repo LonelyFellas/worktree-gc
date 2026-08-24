@@ -58,7 +58,11 @@ pub fn probe(name: &'static str, version_arg: &str) -> ToolInfo {
             .output()
             .ok()
             .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            // gh --version 会连带打印 release 页地址，多行会把报告尾巴撑乱。
+            // 版本号一律在首行。
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or_default().trim().to_string()
+            })
     });
     ToolInfo { name, path, version }
 }

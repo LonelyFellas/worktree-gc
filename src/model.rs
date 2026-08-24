@@ -201,7 +201,8 @@ pub struct Fingerprint {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CacheKind {
     pub name: String,
-    pub ecosystem: &'static str,
+    /// 与 config::CacheRule 同为 String——规则表要能从配置文件反序列化出来。
+    pub ecosystem: String,
 }
 
 /// 一个缓存目录及其体积。

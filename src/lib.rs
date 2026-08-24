@@ -7,10 +7,15 @@
 //! 所以任何判不准的情况一律落 [`model::GateStatus::Unknown`]，绝不放行。
 
 pub mod config;
+pub mod discover;
+pub mod forge;
 pub mod gates;
 pub mod git;
 pub mod model;
 pub mod platform;
+pub mod report;
+pub mod scan;
+pub mod sizing;
 
 #[cfg(any(test, feature = "testkit"))]
 pub mod testkit;
