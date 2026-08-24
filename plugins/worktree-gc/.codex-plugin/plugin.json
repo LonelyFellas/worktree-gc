@@ -1,6 +1,6 @@
 {
   "name": "worktree-gc",
-  "version": "0.1.2+codex.20260824145553",
+  "version": "0.1.3+codex.20260824150634",
   "description": "Inspect local Git worktrees and rebuildable caches without changing files.",
   "author": {
     "name": "LonelyFellas",

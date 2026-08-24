@@ -146,7 +146,7 @@ jobs:
         if: matrix.label == 'macos-aarch64'
         run: cargo test --manifest-path gui/src-tauri/Cargo.toml --all-targets --locked
       - name: Build unsigned GUI installers
-        run: pnpm --dir gui tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --no-sign
+        run: pnpm --dir gui tauri build --target ${{ matrix.target }} --bundles "${{ matrix.bundles }}" --no-sign
       - uses: actions/upload-artifact@v4
         with:
           name: release-gui-${{ matrix.label }}
