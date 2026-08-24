@@ -1,64 +1,86 @@
 :root {
-  --bg: #ffffff; --fg: #1d1d1f; --muted: #6e6e73;
-  --line: #e5e5ea; --card: #f5f5f7;
-  --ok: #1a7f37; --blocked: #6e6e73; --unknown: #b25000; --protected: #0071e3;
+  --bg:#fff; --fg:#1d1d1f; --muted:#86868b; --faint:#f5f5f7;
+  --line:#e8e8ed; --accent:#0071e3; --ok:#1a7f37; --warn:#b25000; --bar:#d2d2d7;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1c1c1e; --fg: #f5f5f7; --muted: #98989d;
-    --line: #38383a; --card: #2c2c2e;
-    --ok: #30d158; --blocked: #98989d; --unknown: #ff9f0a; --protected: #0a84ff;
+    --bg:#1c1c1e; --fg:#f5f5f7; --muted:#8e8e93; --faint:#2c2c2e;
+    --line:#38383a; --accent:#0a84ff; --ok:#30d158; --warn:#ff9f0a; --bar:#48484a;
   }
 }
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--fg);
-  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-main { max-width: 960px; margin: 0 auto; padding: 24px; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--fg);
+  font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; -webkit-font-smoothing:antialiased; }
+main { max-width:720px; margin:0 auto; padding:20px 24px 60px; }
 
-header { display: flex; align-items: center; justify-content: space-between;
-  gap: 16px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
-h1 { font-size: 22px; margin: 0; letter-spacing: -0.02em; }
-.sub { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
-button { background: var(--protected); color: #fff; border: 0; border-radius: 8px;
-  padding: 9px 20px; font-size: 14px; font-weight: 500; cursor: pointer; }
-button:disabled { opacity: .5; cursor: default; }
+header { display:flex; align-items:center; justify-content:space-between; margin-bottom:24px; }
+h1 { font-size:17px; font-weight:600; margin:0; letter-spacing:-.01em; }
 
-.summary { display: flex; gap: 12px; margin: 20px 0; }
-.summary > div { flex: 1; background: var(--card); border-radius: 10px; padding: 14px 16px; }
-.summary strong { display: block; font-size: 22px; letter-spacing: -0.02em; }
-.summary span { color: var(--muted); font-size: 12px; }
-.summary .warn strong { color: var(--unknown); }
+button { border:0; border-radius:980px; font-size:13px; font-weight:500;
+  padding:7px 18px; cursor:pointer; transition:opacity .15s; }
+button:disabled { opacity:.4; cursor:default; }
+button:not(:disabled):hover { opacity:.85; }
+.primary { background:var(--accent); color:#fff; }
+.ghost { background:var(--faint); color:var(--fg); }
 
-.repo { margin: 28px 0; }
-.repo h2 { font-size: 13px; font-weight: 600; color: var(--muted);
-  margin: 0 0 10px; font-family: ui-monospace, SFMono-Regular, monospace; }
-.baseline { font-weight: 400; opacity: .8; }
-.repo-error { background: color-mix(in srgb, var(--unknown) 12%, transparent);
-  border-radius: 8px; padding: 12px 14px; color: var(--unknown); }
+/* 头条 —— 只放「现在就能动手」的量，且动作紧挨着它 */
+.hero { display:flex; align-items:center; gap:16px; background:var(--faint);
+  border-radius:16px; padding:22px 24px; margin-bottom:32px; }
+.hero-num { font-size:38px; font-weight:600; letter-spacing:-.03em; line-height:1; }
+.hero-label { flex:1; font-size:13px; color:var(--muted); display:flex; flex-direction:column; gap:2px; }
+.hero-sub { font-size:12px; opacity:.75; }
+.hero .primary { padding:10px 26px; font-size:14px; }
 
-.wt { background: var(--card); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px;
-  border-left: 3px solid transparent; }
-.wt.ok { border-left-color: var(--ok); }
-.wt.blocked { border-left-color: var(--blocked); }
-.wt.unknown { border-left-color: var(--unknown); }
-.wt.protected { border-left-color: var(--protected); }
+section { margin-bottom:28px; }
+h2 { font-size:12px; font-weight:600; color:var(--muted); text-transform:none;
+  letter-spacing:.02em; margin:0 0 10px; display:flex; align-items:center; gap:6px; }
+h2 em { font-style:normal; background:var(--faint); border-radius:10px;
+  padding:1px 7px; font-size:11px; }
+h2.toggle { cursor:pointer; user-select:none; }
 
-.wt-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.badge { font-weight: 600; font-size: 13px; white-space: nowrap; }
-.size { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 62px; }
-.name { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 13px; }
-.branch { color: var(--muted); font-size: 12px; }
+.row { padding:11px 0; border-bottom:1px solid var(--line); }
+.row:last-child { border-bottom:0; }
+.row-main { display:flex; align-items:baseline; gap:10px; }
+.row-name { font-weight:500; font-size:13.5px; }
+.row-branch { color:var(--muted); font-size:12px; flex:1;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.row-size { font-variant-numeric:tabular-nums; font-size:13px; color:var(--muted); }
+.row.ok .row-size { color:var(--ok); font-weight:500; }
 
-.reason { margin: 6px 0 0 18px; font-size: 13px; color: var(--muted); }
-.reason.unknown { color: var(--unknown); }
-.cache { margin: 6px 0 0 18px; font-size: 13px; }
-.cache.free { color: var(--ok); }
-.cache.held { color: var(--muted); }
-.why { opacity: .85; }
+/* 体积要有视觉权重：22.4G 和 4.4M 长得一样，就找不到大头 */
+.bar { height:3px; background:var(--line); border-radius:2px; margin-top:7px; overflow:hidden; }
+.bar > div { height:100%; background:var(--bar); border-radius:2px; }
+.row.ok .bar > div { background:var(--ok); }
 
-.prunable, .empty { color: var(--muted); font-size: 13px; padding: 12px 0; }
-.empty code { background: var(--card); padding: 2px 6px; border-radius: 4px; }
-.error { background: color-mix(in srgb, #ff3b30 14%, transparent); color: #ff3b30;
-  border-radius: 8px; padding: 12px 14px; margin: 16px 0; }
-footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--line);
-  display: flex; gap: 18px; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+.row-why { margin-top:7px; font-size:12.5px; color:var(--muted); }
+.row-why.unknown { color:var(--warn); }
+/* 「那我该干嘛」——判定是机器的活，决定怎么办是人的活，界面得把选项摆出来 */
+.row-advice { margin-top:4px; font-size:12.5px; color:var(--accent); }
+
+.empty { color:var(--muted); font-size:13px; padding:20px 0; }
+.empty code { background:var(--faint); padding:2px 6px; border-radius:4px; font-size:12px; }
+.error { background:color-mix(in srgb,#ff3b30 12%,transparent); color:#ff3b30;
+  border-radius:10px; padding:12px 14px; margin-bottom:20px; font-size:13px; }
+
+.done-card { background:color-mix(in srgb,var(--ok) 12%,transparent); border-radius:12px;
+  padding:14px 16px; margin-bottom:20px; font-size:13px; }
+.done-card strong { display:block; font-size:17px; color:var(--ok); }
+.done-card span { color:var(--muted); font-size:12px; }
+.done-line { margin-top:6px; color:var(--muted); font-size:12px; }
+
+/* 确认面板：破坏性动作必须有一道明确的门，且要说清代价 */
+.sheet { position:fixed; inset:0; background:rgba(0,0,0,.35);
+  display:flex; align-items:center; justify-content:center; padding:24px;
+  backdrop-filter:blur(3px); }
+.sheet-body { background:var(--bg); border-radius:16px; padding:24px;
+  max-width:460px; width:100%; max-height:80vh; overflow:auto;
+  box-shadow:0 20px 60px rgba(0,0,0,.3); }
+.sheet-body h3 { margin:0 0 8px; font-size:17px; letter-spacing:-.01em; }
+.sheet-note { color:var(--muted); font-size:12.5px; margin:0 0 14px; }
+.sheet-body ul { list-style:none; padding:0; margin:0 0 16px; }
+.sheet-body li { display:flex; justify-content:space-between; gap:12px;
+  padding:7px 0; border-bottom:1px solid var(--line); font-size:12.5px; }
+.sheet-body li span { color:var(--muted); overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap; }
+.sheet-body li em { font-style:normal; font-variant-numeric:tabular-nums; }
+.sheet-actions { display:flex; gap:8px; justify-content:flex-end; }

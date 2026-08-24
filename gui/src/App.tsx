@@ -1,158 +1,230 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { ScanReport, WorktreeReport, RepoReport } from "./types";
+import type { ScanReport } from "./types";
 import { humanBytes } from "./types";
-import { describeCause, statusText, verdictBadge } from "./describe";
+import { describeDetail, statusText } from "./describe";
+import { adviceFor, primaryBlocker } from "./advice";
 import "./App.css";
 
-/** 末两段路径。多个 agent worktree 常同名，只显示 basename 分不清。 */
-function shortName(p: string): string {
-  return p.split("/").slice(-2).join("/");
-}
+type PlanSummary = {
+  id: string;
+  items: { label: string; bytes: number }[];
+  estimated_bytes: number;
+  rejected: string[];
+};
+type ApplySummary = {
+  done: number; stale: number; failed: number;
+  measured_freed: number; lines: string[];
+};
 
-function reclaimableBytes(wt: WorktreeReport): number {
-  return wt.caches
-    .filter((c) => c.outcomes.every((o) => o.status === "Pass"))
-    .reduce((n, c) => n + c.bytes, 0);
-}
+/** 一行待办：把 worktree 和它的缓存拍平成「一件可处置的事」。 */
+type Item = {
+  key: string;
+  name: string;
+  fullPath: string;
+  branch: string;
+  bytes: number;
+  /** 现在就能安全回收的字节数 */
+  free: number;
+  blocked: ReturnType<typeof primaryBlocker>;
+  unknown: string | null;
+  isMain: boolean;
+};
 
-function Worktree({ wt }: { wt: WorktreeReport }) {
-  const badge = verdictBadge(wt.verdict);
-  const reasons = wt.outcomes.map((o) => statusText(o.status)).filter(Boolean);
-
-  return (
-    <div className={`wt ${badge.cls}`}>
-      <div className="wt-head">
-        <span className="badge">{badge.icon} {badge.label}</span>
-        <span className="size">{humanBytes(wt.bytes)}</span>
-        <span className="name">{shortName(wt.path)}</span>
-        <span className="branch">{wt.branch ?? "detached"}</span>
-      </div>
-
-      {/* 拦下与判不准的理由要展开——这正是用户要做决策的地方，折叠起来这个界面就没价值了 */}
-      {reasons.map((r, i) => (
-        <div key={i} className={`reason ${r!.kind}`}>
-          {r!.kind === "unknown" ? "❓" : "└"} {r!.text}
-        </div>
-      ))}
-
-      {wt.caches.map((c) => {
-        const blocker = c.outcomes.map((o) => statusText(o.status)).find(Boolean);
-        return (
-          <div key={c.path} className={`cache ${blocker ? "held" : "free"}`}>
-            {blocker ? "⛔" : "💡"} {c.kind.name}/ ({humanBytes(c.bytes)})
-            {blocker && <span className="why"> 暂不回收：{blocker.text}</span>}
-          </div>
-        );
-      })}
-    </div>
+function toItems(report: ScanReport): Item[] {
+  return report.repos.flatMap((repo) =>
+    repo.worktrees.map((wt) => {
+      const free = wt.caches
+        .filter((c) => c.outcomes.every((o) => o.status === "Pass"))
+        .reduce((n, c) => n + c.bytes, 0);
+      const unknownOutcome = wt.outcomes.find(
+        (o) => typeof o.status === "object" && "Unknown" in o.status,
+      );
+      return {
+        key: wt.path,
+        name: wt.path.split("/").slice(-1)[0],
+        fullPath: wt.path,
+        branch: wt.branch ?? "detached",
+        bytes: wt.bytes,
+        // 主工作区的缓存默认不碰——它是你天天在用的那个，重建代价最实在
+        free: wt.is_main ? 0 : free,
+        blocked: primaryBlocker(wt.outcomes),
+        unknown: unknownOutcome ? statusText(unknownOutcome.status)?.text ?? null : null,
+        isMain: wt.is_main,
+      } satisfies Item;
+    }),
   );
 }
 
-function Repo({ repo }: { repo: RepoReport }) {
-  if (!repo.baseline) {
-    // 基线探测失败绝不能静默略过：用户会把「没扫到」误读成「没东西可清」
-    return (
-      <section className="repo">
-        <h2>{repo.root}</h2>
-        <div className="repo-error">
-          ⛔ 未能识别主干分支，本仓未做判定
-          {repo.baseline_error && <div className="reason">└ {describeCause(repo.baseline_error)}</div>}
-        </div>
-      </section>
-    );
-  }
-  const base = repo.baseline.remote
-    ? `${repo.baseline.remote}/${repo.baseline.branch}`
-    : repo.baseline.branch;
+function Bar({ value, max }: { value: number; max: number }) {
+  // 体积必须有视觉权重。原来 22.4G 和 4.4M 长得一模一样，
+  // 而这个工具存在的意义就是先找到大头。
+  const pct = max > 0 ? Math.max(2, (value / max) * 100) : 0;
+  return <div className="bar"><div style={{ width: `${pct}%` }} /></div>;
+}
 
+function Row({ item, max }: { item: Item; max: number }) {
+  const advice = item.blocked ? adviceFor(item.blocked) : null;
   return (
-    <section className="repo">
-      <h2>
-        {repo.root} <span className="baseline">基线 {base}</span>
-      </h2>
-      {repo.worktrees.map((wt) => <Worktree key={wt.path} wt={wt} />)}
-      {repo.prunable.length > 0 && (
-        <div className="prunable">🧹 有 {repo.prunable.length} 条陈旧注册记录（目录已消失）</div>
-      )}
-    </section>
+    <div className="row">
+      <div className="row-main">
+        <span className="row-name" title={item.fullPath}>{item.name}</span>
+        <span className="row-branch">{item.branch}</span>
+        <span className="row-size">{humanBytes(item.bytes)}</span>
+      </div>
+      <Bar value={item.bytes} max={max} />
+      {item.blocked && <div className="row-why">{describeDetail(item.blocked)}</div>}
+      {item.unknown && <div className="row-why unknown">{item.unknown}</div>}
+      {advice && <div className="row-advice">→ {advice}</div>}
+    </div>
   );
 }
 
 export default function App() {
   const [repos, setRepos] = useState<string[]>([]);
   const [report, setReport] = useState<ScanReport | null>(null);
-  const [scanning, setScanning] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [pending, setPending] = useState<PlanSummary | null>(null);
+  const [result, setResult] = useState<ApplySummary | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showIdle, setShowIdle] = useState(false);
 
-  useEffect(() => {
-    invoke<string[]>("default_repos").then(setRepos).catch(() => setRepos([]));
-  }, []);
+  useEffect(() => { void refresh(); }, []);
 
-  async function runScan() {
-    setScanning(true);
+  async function refresh() {
+    setBusy("扫描中");
     setError(null);
+    setResult(null);
     try {
-      setReport(await invoke<ScanReport>("scan_repos", { repos, offline: false }));
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setScanning(false);
-    }
+      const r = await invoke<string[]>("default_repos");
+      setRepos(r);
+      if (r.length) setReport(await invoke<ScanReport>("scan_repos", { repos: r, offline: false }));
+    } catch (e) { setError(String(e)); }
+    finally { setBusy(null); }
   }
 
-  const totalReclaimable = report
-    ? report.repos.flatMap((r) => r.worktrees).reduce((n, wt) => n + reclaimableBytes(wt), 0)
-    : 0;
-  const unclear = report
-    ? report.repos.flatMap((r) => r.worktrees)
-        .filter((wt) => typeof wt.verdict === "object" && "NeedsAttention" in wt.verdict).length
-    : 0;
+  async function proposeReclaim() {
+    setBusy("正在计算可回收的部分");
+    setError(null);
+    try {
+      setPending(await invoke<PlanSummary>("create_plan", {
+        repos, kind: "reclaim", includeMain: false,
+      }));
+    } catch (e) { setError(String(e)); }
+    finally { setBusy(null); }
+  }
+
+  async function confirmApply() {
+    if (!pending) return;
+    setBusy("正在回收");
+    try {
+      setResult(await invoke<ApplySummary>("apply_plan", { id: pending.id }));
+      setPending(null);
+      await refresh();
+    } catch (e) { setError(String(e)); setPending(null); }
+    finally { setBusy(null); }
+  }
+
+  const items = useMemo(() => (report ? toItems(report) : []), [report]);
+  const max = Math.max(1, ...items.map((i) => i.bytes));
+  const freeNow = items.reduce((n, i) => n + i.free, 0);
+  const needsYou = items.filter((i) => i.free === 0 && (i.blocked || i.unknown) && !i.isMain)
+    .sort((a, b) => b.bytes - a.bytes);
+  const idle = items.filter((i) => !needsYou.includes(i) && i.free === 0)
+    .sort((a, b) => b.bytes - a.bytes);
+  const ready = items.filter((i) => i.free > 0).sort((a, b) => b.free - a.free);
 
   return (
     <main>
       <header>
-        <div>
-          <h1>worktree-gc</h1>
-          <p className="sub">回收 AI coding agent 留下的 worktree 所占磁盘</p>
-        </div>
-        <button onClick={runScan} disabled={scanning || repos.length === 0}>
-          {scanning ? "扫描中…" : "扫描"}
+        <h1>worktree-gc</h1>
+        <button className="ghost" onClick={refresh} disabled={!!busy}>
+          {busy ? busy + "…" : "重新扫描"}
         </button>
       </header>
 
-      {repos.length === 0 && (
-        <div className="empty">
-          还没有配置要扫的仓库。在 <code>~/.claude/skills/worktree-gc/repos.txt</code> 里
-          一行一个写上仓库路径。
+      {error && <div className="error">{error}</div>}
+
+      {result && (
+        <div className="done-card">
+          <strong>已释放 {humanBytes(Math.max(0, result.measured_freed))}</strong>
+          <span>完成 {result.done} 项{result.stale ? `，跳过 ${result.stale} 项` : ""}</span>
+          {result.lines.map((l, i) => <div key={i} className="done-line">{l}</div>)}
         </div>
       )}
 
-      {scanning && (
-        <div className="empty">
-          正在扫描 —— 要跑 git 子进程并遍历目录，几十秒是正常的。
+      {/* 头条只放「现在就能动手」的量，而不是所有可回收的量。
+          原来把默认受保护的主仓缓存算进头条，最醒目的数字反而不可操作。 */}
+      <section className="hero">
+        <div className="hero-num">{humanBytes(freeNow)}</div>
+        <div className="hero-label">
+          现在就能安全回收
+          {report && <span className="hero-sub">磁盘剩余 {humanBytes(report.available_bytes)}</span>}
         </div>
+        <button className="primary" onClick={proposeReclaim} disabled={!!busy || freeNow === 0}>
+          回收
+        </button>
+      </section>
+
+      {ready.length > 0 && (
+        <section>
+          <h2>可以立即回收 <em>{ready.length}</em></h2>
+          {ready.map((i) => (
+            <div key={i.key} className="row ok">
+              <div className="row-main">
+                <span className="row-name" title={i.fullPath}>{i.name}</span>
+                <span className="row-branch">{i.branch}</span>
+                <span className="row-size">{humanBytes(i.free)}</span>
+              </div>
+              <Bar value={i.free} max={max} />
+            </div>
+          ))}
+        </section>
       )}
 
-      {error && <div className="error">扫描失败：{error}</div>}
+      {needsYou.length > 0 && (
+        <section>
+          <h2>需要你决定 <em>{needsYou.length}</em></h2>
+          {needsYou.map((i) => <Row key={i.key} item={i} max={max} />)}
+        </section>
+      )}
 
-      {report && !scanning && (
-        <>
-          <div className="summary">
-            {/* 标"约"不是谦虚：APFS 写时复制会让 du 口径系统性高估 */}
-            <div><strong>{humanBytes(totalReclaimable)}</strong><span>约可回收缓存</span></div>
-            <div><strong>{humanBytes(report.available_bytes)}</strong><span>当前可用</span></div>
-            {unclear > 0 && <div className="warn"><strong>{unclear}</strong><span>判不准</span></div>}
+      {idle.length > 0 && (
+        <section>
+          <h2 className="toggle" onClick={() => setShowIdle(!showIdle)}>
+            {showIdle ? "▾" : "▸"} 不用管 <em>{idle.length}</em>
+          </h2>
+          {showIdle && idle.map((i) => <Row key={i.key} item={i} max={max} />)}
+        </section>
+      )}
+
+      {report && items.length === 0 && (
+        <div className="empty">没有发现 worktree。在 <code>repos.txt</code> 里配置要扫的仓库。</div>
+      )}
+
+      {pending && (
+        <div className="sheet" onClick={() => setPending(null)}>
+          <div className="sheet-body" onClick={(e) => e.stopPropagation()}>
+            <h3>回收 {humanBytes(pending.estimated_bytes)} 构建缓存？</h3>
+            <p className="sheet-note">
+              只删可重建的构建产物。源码与未提交改动不受影响，下次构建会重新生成。
+            </p>
+            <ul>
+              {pending.items.map((it, i) => (
+                <li key={i}><span>{it.label}</span><em>{humanBytes(it.bytes)}</em></li>
+              ))}
+            </ul>
+            {pending.rejected.length > 0 && (
+              <p className="sheet-note">跳过 {pending.rejected.length} 项（判定未放行）</p>
+            )}
+            <div className="sheet-actions">
+              <button className="ghost" onClick={() => setPending(null)}>取消</button>
+              <button className="primary" onClick={confirmApply} disabled={!!busy}>
+                {busy ?? "确认回收"}
+              </button>
+            </div>
           </div>
-          {report.repos.map((r) => <Repo key={r.root} repo={r} />)}
-          <footer>
-            {report.tools.map((t) => (
-              <span key={t.name}>
-                {t.name}: {t.version ? `${t.version.split("\n")[0]}` : "未找到"}
-              </span>
-            ))}
-          </footer>
-        </>
+        </div>
       )}
     </main>
   );

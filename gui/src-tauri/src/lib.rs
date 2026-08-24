@@ -12,11 +12,16 @@
 //!    就会把「本地来源的自定义命令免 ACL」这条豁免整体关掉，之后每个
 //!    `#[tauri::command]` 都要显式授权，否则全部 `not allowed by ACL`。
 
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::Duration;
 use wtgc::config::ScanConfig;
 use wtgc::gates::SystemClock;
 use wtgc::model::ScanReport;
+use wtgc::apply::{ApplyOptions, Outcome, apply};
+use wtgc::fsops::RealFs;
+use wtgc::plan::{Plan, Selection, plan};
 use wtgc::scan::{Env, scan};
 use wtgc::{discover, forge, git, platform};
 
@@ -79,11 +84,152 @@ fn default_repos() -> Vec<String> {
     from_file.unwrap_or_default()
 }
 
+/// 已创建但尚未执行的计划。
+///
+/// **前端只拿到 id，永远拿不到也传不回路径。** 这不是 UI 礼貌，是两个硬保证：
+/// 一个被攻陷或有 bug 的 WebView 无法让后端去删任意目录；
+/// 以及计划里冻结的指纹能在执行前复检，挡住扫描到点击之间的状态漂移。
+#[derive(Default)]
+struct PlanStore(Mutex<HashMap<String, Plan>>);
+
+#[derive(serde::Serialize)]
+struct PlanSummary {
+    id: String,
+    /// 只回传展示所需的最小信息，不含可用于构造删除请求的原始路径。
+    items: Vec<PlanItem>,
+    estimated_bytes: u64,
+    rejected: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct PlanItem {
+    label: String,
+    bytes: u64,
+}
+
+#[derive(serde::Serialize)]
+struct ApplySummary {
+    done: usize,
+    stale: usize,
+    failed: usize,
+    /// 执行前后实测的可用空间差。**不报 du 的估算**——
+    /// APFS 写时复制会让估算系统性偏高，数字对不上就会丢掉信任。
+    measured_freed: i64,
+    lines: Vec<String>,
+}
+
+/// 从一次扫描结果构造计划。`kind` 为 "reclaim" 或 "remove"。
+#[tauri::command]
+async fn create_plan(
+    store: tauri::State<'_, PlanStore>,
+    repos: Vec<String>,
+    kind: String,
+    include_main: bool,
+) -> Result<PlanSummary, String> {
+    let report = tauri::async_runtime::spawn_blocking(move || run_scan(repos, false))
+        .await
+        .map_err(|e| format!("扫描任务异常终止: {e}"))??;
+
+    let all = Selection::everything_allowed(&report, include_main);
+    let sel = Selection {
+        reclaim: if kind == "reclaim" { all.reclaim } else { Default::default() },
+        remove: if kind == "remove" { all.remove } else { Default::default() },
+        prune: kind == "remove",
+    };
+    let p = plan(&report, &sel);
+
+    // id 由内容派生而非随机：同一份计划重复创建不会在 store 里堆积
+    let id = format!("{kind}-{}-{}", p.actions.len(), p.estimated_bytes());
+    let summary = PlanSummary {
+        id: id.clone(),
+        items: p
+            .actions
+            .iter()
+            .map(|a| PlanItem {
+                label: shorten(a.target()),
+                bytes: a.estimated_bytes(),
+            })
+            .collect(),
+        estimated_bytes: p.estimated_bytes(),
+        rejected: p.rejected.iter().map(|(path, why)| format!("{}：{why}", shorten(path))).collect(),
+    };
+
+    if let Ok(mut g) = store.0.lock() {
+        g.insert(id, p);
+    }
+    Ok(summary)
+}
+
+/// 执行一个已创建的计划。计划**单次使用**，执行后即从 store 移除——
+/// 防止一次确认被重放成多次删除。
+#[tauri::command]
+async fn apply_plan(
+    store: tauri::State<'_, PlanStore>,
+    id: String,
+) -> Result<ApplySummary, String> {
+    let p = {
+        let mut g = store.0.lock().map_err(|_| "计划存储被污染".to_string())?;
+        g.remove(&id).ok_or("计划已失效，请重新扫描")?
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let git_exe = git::exe::resolve("git").ok_or("找不到 git")?;
+        let env = Env {
+            git: Box::new(git::RealGit::new(git_exe, Duration::from_secs(30))),
+            forge: Box::new(forge::Offline),
+            clock: Box::new(SystemClock),
+            procs: Box::new(platform::procs::SysinfoProcs),
+        };
+        let out = apply(&p, &ApplyOptions { dry_run: false, audit_log: None }, &env, &RealFs);
+
+        let mut lines = Vec::new();
+        let mut failed = 0;
+        for r in &out.results {
+            let name = shorten(r.action.target());
+            match &r.outcome {
+                Outcome::Done { .. } => lines.push(format!("✅ {name}")),
+                Outcome::Stale { what } => lines.push(format!("⏭ {name}：{what}")),
+                Outcome::Failed(c) => {
+                    failed += 1;
+                    lines.push(format!("⚠️ {name}：{c:?}"));
+                }
+                Outcome::Simulated => {}
+            }
+        }
+        Ok(ApplySummary {
+            done: out.done_count(),
+            stale: out.stale_count(),
+            failed,
+            measured_freed: out.measured_freed,
+            lines,
+        })
+    })
+    .await
+    .map_err(|e| format!("执行任务异常终止: {e}"))?
+}
+
+/// 末两段路径。多个 agent worktree 常同名，只显示 basename 分不清。
+fn shorten(p: &std::path::Path) -> String {
+    let parts: Vec<_> = p.components().rev().take(3).collect();
+    parts
+        .into_iter()
+        .rev()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![scan_repos, default_repos])
+        .manage(PlanStore::default())
+        .invoke_handler(tauri::generate_handler![
+            scan_repos,
+            default_repos,
+            create_plan,
+            apply_plan
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
