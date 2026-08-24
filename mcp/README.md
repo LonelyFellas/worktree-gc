@@ -20,9 +20,9 @@ cd /path/to/worktree-gc
 cargo build --bin wtgc
 
 cd mcp
-pnpm install
-pnpm build
-pnpm start
+corepack pnpm@10.33.0 install
+corepack pnpm@10.33.0 build
+corepack pnpm@10.33.0 start
 ```
 
 默认 MCP 地址为 `http://127.0.0.1:8787/mcp`，健康检查为 `http://127.0.0.1:8787/health`。
@@ -30,13 +30,13 @@ pnpm start
 可以通过环境变量覆盖端口或 `wtgc` 路径：
 
 ```bash
-MCP_PORT=3000 WTGC_BIN=/absolute/path/to/wtgc pnpm start
+MCP_PORT=3000 WTGC_BIN=/absolute/path/to/wtgc corepack pnpm@10.33.0 start
 ```
 
 ## 检查
 
 ```bash
-pnpm check
+corepack pnpm@10.33.0 check
 npx @modelcontextprotocol/inspector
 ```
 

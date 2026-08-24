@@ -115,8 +115,8 @@ AI coding agent（Claude Code、Codex、Cursor 等）会为每个任务开一个
 cargo test
 cargo fmt --all --check
 cargo clippy --all-targets --locked -- -D warnings
-pnpm --dir mcp check
-pnpm --dir gui build
+corepack pnpm@10.33.0 --dir mcp check
+corepack pnpm@10.33.0 --dir gui build
 ```
 
 测试**构造真实的 git 仓库**，而不是 mock git。这个项目遇到的每一个真实 bug

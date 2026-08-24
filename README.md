@@ -117,8 +117,8 @@ something wrong can cost work that exists nowhere else. Every trade-off leans to
 cargo test
 cargo fmt --all --check
 cargo clippy --all-targets --locked -- -D warnings
-pnpm --dir mcp check
-pnpm --dir gui build
+corepack pnpm@10.33.0 --dir mcp check
+corepack pnpm@10.33.0 --dir gui build
 ```
 
 Tests build **real git repositories** rather than mocking git. Every genuine bug this project
