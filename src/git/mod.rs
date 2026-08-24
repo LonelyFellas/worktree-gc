@@ -95,6 +95,12 @@ impl GitRunner for RealGit {
             .env("GIT_OPTIONAL_LOCKS", "0") // 只读操作不去抢索引锁
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            // 单独进程组让超时处理能连同 credential helper、hook 等子进程一起终止。
+            cmd.process_group(0);
+        }
 
         let mut child = cmd.spawn().map_err(|e| Cause::Io {
             path: cwd.to_path_buf(),
@@ -125,7 +131,7 @@ impl GitRunner for RealGit {
         let status = match child.wait_timeout(self.timeout) {
             Ok(Some(status)) => status,
             Ok(None) => {
-                let _ = child.kill();
+                kill_process_tree(&mut child);
                 let _ = child.wait();
                 let _ = stdout_reader.join();
                 let _ = stderr_reader.join();
@@ -135,7 +141,7 @@ impl GitRunner for RealGit {
                 });
             }
             Err(e) => {
-                let _ = child.kill();
+                kill_process_tree(&mut child);
                 let _ = child.wait();
                 let _ = stdout_reader.join();
                 let _ = stderr_reader.join();
@@ -156,6 +162,18 @@ impl GitRunner for RealGit {
     }
 }
 
+fn kill_process_tree(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    if let Ok(id) = i32::try_from(child.id()) {
+        // SAFETY: spawn 前已用 process_group(0) 让 child 成为独立进程组组长；
+        // 负 pid 只会向该组发 SIGKILL，不会命中当前测试/宿主进程组。
+        if unsafe { libc::kill(-id, libc::SIGKILL) } == 0 {
+            return;
+        }
+    }
+    let _ = child.kill();
+}
+
 fn join_output(
     handle: thread::JoinHandle<std::io::Result<Vec<u8>>>,
     cwd: &Path,
@@ -174,18 +192,18 @@ fn join_output(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::{GitRunner, RealGit};
     use crate::model::Cause;
     use std::time::{Duration, Instant};
 
-    #[cfg(unix)]
     #[test]
     fn command_timeout_is_enforced() {
         let git = RealGit::new("/bin/sh".into(), Duration::from_millis(100));
         let started = Instant::now();
-        let result = git.exec(std::path::Path::new("/"), &["-c", "sleep 5"]);
+        // 后台子进程继续持有 stdout/stderr，确保只杀 shell 时测试会稳定失败。
+        let result = git.exec(std::path::Path::new("/"), &["-c", "sleep 5 & wait"]);
 
         assert!(
             matches!(result, Err(Cause::Timeout { .. })),

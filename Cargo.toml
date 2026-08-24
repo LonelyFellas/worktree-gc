@@ -37,6 +37,9 @@ thiserror = "2.0.20"
 tempfile = { version = "3.27.0", optional = true }
 wait-timeout = "0.2.1"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.189"
+
 [dev-dependencies]
 # 自依赖以打开 testkit：集成测试是外部 crate，看不到 #[cfg(test)] 的模块
 wtgc = { path = ".", features = ["testkit"] }

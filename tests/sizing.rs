@@ -9,6 +9,7 @@ use wtgc::model::Cause;
 use wtgc::sizing::{dir_size, dir_sizes};
 
 const KIB: u64 = 1024;
+#[cfg(unix)]
 const MIB: u64 = 1024 * 1024;
 
 /// 块对齐会让统计值略大于逻辑长度，留一格余量做上界。
