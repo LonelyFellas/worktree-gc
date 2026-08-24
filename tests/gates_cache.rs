@@ -154,6 +154,7 @@ fn ignored_target_without_rust_marker_is_blocked() {
 }
 
 /// 符号链接：删它可能波及链接目标之外的东西。
+#[cfg(unix)]
 #[test]
 fn symlinked_cache_is_blocked() {
     let r = TempRepo::new();
@@ -164,7 +165,6 @@ fn symlinked_cache_is_blocked() {
 
     let elsewhere = r.root.join("elsewhere");
     std::fs::create_dir_all(&elsewhere).expect("建目录");
-    #[cfg(unix)]
     std::os::unix::fs::symlink(&elsewhere, wt.join("target")).expect("建软链");
 
     let cfg = ScanConfig::default();

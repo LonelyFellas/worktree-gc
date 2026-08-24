@@ -127,18 +127,7 @@ fn registered_nested_worktree_blocks() {
 
     let inner = wt.join(".claude/worktrees/agent-1");
     let head = r.head();
-    r.git_in(
-        &wt,
-        &[
-            "worktree",
-            "add",
-            "-q",
-            "--detach",
-            inner.to_str().expect("路径"),
-            &head,
-        ],
-    );
-    let inner = inner.canonicalize().expect("canonicalize 内层 worktree");
+    let inner = r.worktree_at(&inner, &head);
 
     assert!(
         inner.join(".git").is_file(),
@@ -230,18 +219,7 @@ fn nested_worktree_inside_skipped_dir_still_blocks() {
 
     let inner = wt.join("target/scratch/agent-2");
     let head = r.head();
-    r.git_in(
-        &wt,
-        &[
-            "worktree",
-            "add",
-            "-q",
-            "--detach",
-            inner.to_str().expect("路径"),
-            &head,
-        ],
-    );
-    let inner = inner.canonicalize().expect("canonicalize 内层 worktree");
+    let inner = r.worktree_at(&inner, &head);
 
     let cfg = ScanConfig::default();
     assert!(

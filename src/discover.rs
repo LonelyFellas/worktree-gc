@@ -77,7 +77,7 @@ pub fn default_seeds() -> Vec<PathBuf> {
 /// 但绝不会拿到一个「看起来正常」的空结果。
 pub fn expand(git: &dyn GitRunner, at: &Path) -> Result<Discovered, Cause> {
     let out = git.run_ok(at, &["worktree", "list", "--porcelain"])?;
-    let entries = porcelain::parse_worktree_list(&out.stdout_utf8());
+    let mut entries = porcelain::parse_worktree_list(&out.stdout_utf8());
 
     // 命令成功却一条都没有：不是 git 仓，或者输出格式变了。两种都属于「说不清」，
     // 上抛而不是当成一个没有 worktree 的空仓库。
@@ -94,6 +94,17 @@ pub fn expand(git: &dyn GitRunner, at: &Path) -> Result<Discovered, Cause> {
         path: main.path.clone(),
         msg: e.to_string(),
     })?;
+
+    // Git for Windows 输出普通的 C:/...，canonicalize 则返回 \\?\C:\...；两种 PathBuf
+    // 不相等，会让主工作区失去 is_main 保护。有效 worktree 必须统一到同一口径。
+    for entry in &mut entries {
+        if !entry.prunable {
+            entry.path = entry.path.canonicalize().map_err(|e| Cause::Io {
+                path: entry.path.clone(),
+                msg: e.to_string(),
+            })?;
+        }
+    }
 
     // prunable = 注册记录还在、目录已经没了。它没有磁盘可回收，只能 `git worktree prune`，
     // 混进 worktrees 会让后续每道门禁都对着一个不存在的路径判「判不准」。

@@ -66,6 +66,7 @@ fn dot_prefixed_caches_are_counted() {
 
 /// 硬链接：同一份物理数据两个名字，块只有一份。
 /// 不去重就会把 pnpm store / cargo 产物这类目录的体积成倍报大。
+#[cfg(unix)]
 #[test]
 fn hard_links_are_counted_once() {
     let d = tmp();
