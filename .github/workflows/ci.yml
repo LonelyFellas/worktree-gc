@@ -26,7 +26,7 @@ jobs:
       - name: Lint
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: Test
-        run: cargo test --all-targets --locked
+        run: cargo test --all-targets --locked --no-fail-fast
 
   javascript:
     name: MCP and GUI frontend

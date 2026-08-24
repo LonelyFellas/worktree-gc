@@ -21,15 +21,7 @@ fn repo_with_commit() -> TempRepo {
 /// 在任意绝对路径处挂一个该仓的 linked worktree（`TempRepo::worktree` 只能挂在仓内）。
 fn worktree_at(r: &TempRepo, at: &Path) -> PathBuf {
     let head = r.head();
-    r.git(&[
-        "worktree",
-        "add",
-        "-q",
-        "--detach",
-        at.to_str().expect("路径"),
-        &head,
-    ]);
-    at.canonicalize().expect("canonicalize")
+    r.worktree_at(at, &head)
 }
 
 fn cfg(repos: Vec<PathBuf>, seeds: Vec<PathBuf>) -> ScanConfig {

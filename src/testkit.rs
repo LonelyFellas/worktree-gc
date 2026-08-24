@@ -76,20 +76,36 @@ impl TempRepo {
     /// 建一个 worktree，返回其绝对路径。
     pub fn worktree(&self, name: &str, committish: &str) -> PathBuf {
         let p = self.root.join(name);
-        self.git(&[
-            "worktree",
-            "add",
-            "-q",
-            "--detach",
-            p.to_str().expect("路径"),
-            committish,
-        ]);
+        self.worktree_at(&p, committish)
+    }
+
+    /// 在指定绝对路径建立 worktree。
+    pub fn worktree_at(&self, p: &Path, committish: &str) -> PathBuf {
+        let git_path = git_path_arg(p);
+        self.git(&["worktree", "add", "-q", "--detach", &git_path, committish]);
         p.canonicalize().expect("canonicalize")
     }
 
     pub fn head(&self) -> String {
         self.git(&["rev-parse", "HEAD"]).trim().to_string()
     }
+}
+
+#[cfg(windows)]
+fn git_path_arg(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    if let Some(rest) = raw.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = raw.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        raw.into_owned()
+    }
+}
+
+#[cfg(not(windows))]
+fn git_path_arg(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
 }
 
 impl Default for TempRepo {
