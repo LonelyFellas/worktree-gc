@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import type { ScanReport } from "./types";
 import { humanBytes } from "./types";
 import { describeDetail, statusText } from "./describe";
@@ -88,6 +89,10 @@ export default function App() {
   const [result, setResult] = useState<ApplySummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showIdle, setShowIdle] = useState(false);
+  const [showRepos, setShowRepos] = useState(false);
+  // 路径以 ~ 缩写显示——绝对路径又长又挤，看的人只需要认出是哪个仓。
+  // 从已有清单反推 home，省一个后端往返。
+  const home = repos[0]?.match(/^(\/Users\/[^/]+)/)?.[1] ?? "";
 
   useEffect(() => { void refresh(); }, []);
 
@@ -101,6 +106,26 @@ export default function App() {
       if (r.length) setReport(await invoke<ScanReport>("scan_repos", { repos: r, offline: false }));
     } catch (e) { setError(String(e)); }
     finally { setBusy(null); }
+  }
+
+  async function addRepo() {
+    const picked = await open({ directory: true, multiple: false, title: "选择要监控的仓库" });
+    if (typeof picked !== "string") return;
+    setError(null);
+    try {
+      // 后端会把选中的子目录归位到仓库根，并拒绝非 git 目录——
+      // 静默收下一个非仓库路径，只会让之后每次扫描都多一条无解的噪音
+      setRepos(await invoke<string[]>("add_repo", { path: picked }));
+      await refresh();
+    } catch (e) { setError(String(e)); }
+  }
+
+  async function dropRepo(path: string) {
+    setError(null);
+    try {
+      setRepos(await invoke<string[]>("remove_repo", { path }));
+      await refresh();
+    } catch (e) { setError(String(e)); }
   }
 
   async function proposeReclaim() {
@@ -198,8 +223,38 @@ export default function App() {
         </section>
       )}
 
-      {report && items.length === 0 && (
-        <div className="empty">没有发现 worktree。在 <code>repos.txt</code> 里配置要扫的仓库。</div>
+      {repos.length === 0 && !busy && (
+        <div className="onboard">
+          <p>还没有监控任何仓库。</p>
+          <button className="primary" onClick={addRepo}>添加仓库</button>
+        </div>
+      )}
+
+      {report && repos.length > 0 && items.length === 0 && (
+        <div className="empty">这些仓库里没有发现 worktree。</div>
+      )}
+
+      {repos.length > 0 && (
+        <section className="repos">
+          <h2 className="toggle" onClick={() => setShowRepos(!showRepos)}>
+            {showRepos ? "▾" : "▸"} 监控的仓库 <em>{repos.length}</em>
+          </h2>
+          {showRepos && (
+            <>
+              {repos.map((r) => (
+                <div key={r} className="repo-line">
+                  <span title={r}>{r.replace(home, "~")}</span>
+                  <button className="tiny" onClick={() => dropRepo(r)}>移除</button>
+                </div>
+              ))}
+              <button className="ghost small" onClick={addRepo}>添加仓库…</button>
+              <p className="repo-note">
+                清单存在 <code>~/.claude/skills/worktree-gc/repos.txt</code>，
+                每日定时体检读的是同一份。
+              </p>
+            </>
+          )}
+        </section>
       )}
 
       {pending && (

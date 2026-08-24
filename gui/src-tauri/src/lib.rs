@@ -66,22 +66,91 @@ fn run_scan(repos: Vec<String>, offline: bool) -> Result<ScanReport, String> {
     Ok(scan(&cfg, &env))
 }
 
-/// 默认要扫的仓库。与 CLI 的每日体检读同一份清单，避免两边各说各话。
+/// 仓库清单的位置。**与 CLI 的每日体检读同一份文件**——
+/// 两个入口各存一份配置，迟早会出现「GUI 里有、定时任务里没有」的沉默偏差。
+fn repos_file() -> Option<PathBuf> {
+    std::env::var("HOME")
+        .ok()
+        .map(|h| PathBuf::from(h).join(".claude/skills/worktree-gc/repos.txt"))
+}
+
+fn read_repos() -> Vec<String> {
+    repos_file()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|s| {
+            s.lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn write_repos(list: &[String]) -> Result<(), String> {
+    let path = repos_file().ok_or("找不到 HOME，无法定位配置文件")?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("建目录失败: {e}"))?;
+    }
+    // 保留说明性注释：这个文件用户也会手动编辑，写回时把来龙去脉留下
+    let body = format!(
+        "# wtgc 要扫的仓库，一行一个。# 开头是注释。\n         # GUI 和每日体检读的是同一份清单，改哪边都一样。\n         # 只需列「不在已知 agent 落点下」的仓库——~/.codex/worktrees 之类会被自动发现。\n{}\n",
+        list.join("\n")
+    );
+    std::fs::write(&path, body).map_err(|e| format!("写入 {} 失败: {e}", path.display()))
+}
+
 #[tauri::command]
 fn default_repos() -> Vec<String> {
-    let list = std::env::var("HOME")
-        .map(|h| PathBuf::from(h).join(".claude/skills/worktree-gc/repos.txt"))
-        .ok();
+    read_repos()
+}
 
-    let from_file = list.and_then(|p| std::fs::read_to_string(p).ok()).map(|s| {
-        s.lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .map(str::to_string)
-            .collect::<Vec<_>>()
-    });
+/// 加一个仓库。**先验证再写入**——把一个非 git 目录静默加进去，
+/// 结果是每次扫描都多一条「未识别主干」的噪音，而用户不知道为什么。
+#[tauri::command]
+fn add_repo(path: String) -> Result<Vec<String>, String> {
+    let p = PathBuf::from(&path);
+    let canonical = p
+        .canonicalize()
+        .map_err(|e| format!("路径不可用: {e}"))?
+        .to_string_lossy()
+        .into_owned();
 
-    from_file.unwrap_or_default()
+    let git_exe = git::exe::resolve("git").ok_or("找不到 git")?;
+    let runner = git::RealGit::new(git_exe, Duration::from_secs(10));
+
+    // 用 --show-toplevel 而不是判断 .git 是否存在：
+    // 用户很可能选中的是仓库里的某个子目录，这条能直接把它归位到仓库根。
+    let out = {
+        use wtgc::git::GitRunner;
+        runner
+            .exec(&PathBuf::from(&canonical), &["rev-parse", "--show-toplevel"])
+            .map_err(|e| format!("{e:?}"))?
+    };
+    if out.code != Some(0) {
+        return Err(format!("{canonical} 不是 git 仓库"));
+    }
+    let root = out.stdout_utf8().trim().to_string();
+    if root.is_empty() {
+        return Err("无法确定仓库根目录".into());
+    }
+
+    let mut list = read_repos();
+    if list.iter().any(|r| r == &root) {
+        return Err(format!("{root} 已经在清单里了"));
+    }
+    list.push(root);
+    list.sort();
+    write_repos(&list)?;
+    Ok(list)
+}
+
+#[tauri::command]
+fn remove_repo(path: String) -> Result<Vec<String>, String> {
+    let mut list = read_repos();
+    list.retain(|r| r != &path);
+    write_repos(&list)?;
+    Ok(list)
 }
 
 /// 已创建但尚未执行的计划。
@@ -223,10 +292,13 @@ fn shorten(p: &std::path::Path) -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(PlanStore::default())
         .invoke_handler(tauri::generate_handler![
             scan_repos,
             default_repos,
+            add_repo,
+            remove_repo,
             create_plan,
             apply_plan
         ])
