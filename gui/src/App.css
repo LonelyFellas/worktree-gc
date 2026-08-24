@@ -1,20 +1,25 @@
 :root {
   --bg:#fff; --fg:#1d1d1f; --muted:#86868b; --faint:#f5f5f7;
-  --line:#e8e8ed; --accent:#0071e3; --ok:#1a7f37; --warn:#b25000; --bar:#d2d2d7;
+  --line:#e8e8ed; --accent:#0071e3; --ok:#1a7f37; --warn:#b25000;
+  --note:#6e5dc6; --bar:#d2d2d7;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg:#1c1c1e; --fg:#f5f5f7; --muted:#8e8e93; --faint:#2c2c2e;
-    --line:#38383a; --accent:#0a84ff; --ok:#30d158; --warn:#ff9f0a; --bar:#48484a;
+    --line:#38383a; --accent:#0a84ff; --ok:#30d158; --warn:#ff9f0a;
+    --note:#bf5af2; --bar:#48484a;
   }
 }
 * { box-sizing:border-box; }
 body { margin:0; background:var(--bg); color:var(--fg);
   font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; -webkit-font-smoothing:antialiased; }
-main { min-width:0; padding:20px 28px 60px; overflow-y:auto; }
+main { min-width:0; padding:var(--main-y) var(--main-x) var(--main-bottom);
+  overflow-y:auto; container-type:inline-size; }
 main > * { max-width:680px; margin-left:auto; margin-right:auto; }
 
-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:24px; }
+header { display:flex; align-items:center; justify-content:space-between;
+  margin-bottom:var(--header-bottom); }
+.header-actions { display:flex; align-items:center; gap:8px; }
 h1 { font-size:17px; font-weight:600; margin:0; letter-spacing:-.01em; }
 
 button { border:0; border-radius:980px; font-size:13px; font-weight:500;
@@ -24,38 +29,93 @@ button:not(:disabled):hover { opacity:.85; }
 .primary { background:var(--accent); color:#fff; }
 .ghost { background:var(--faint); color:var(--fg); }
 
+/* 设置页先承载稳定的界面偏好，后续设置按同样的卡片结构向下增加。 */
+.settings-page h2 { margin-bottom:8px; }
+.settings-page h2:not(:first-child) { margin-top:var(--settings-section-gap); }
+.setting-card { display:flex; align-items:center; gap:24px;
+  padding:var(--setting-y) var(--setting-x);
+  border-radius:12px; background:var(--faint); }
+.setting-card + .setting-card { margin-top:8px; }
+.setting-copy { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.setting-copy strong { font-size:13.5px; font-weight:500; }
+.setting-copy span { color:var(--muted); font-size:12px; }
+.setting-copy code { background:var(--bg); padding:1px 5px; border-radius:3px; }
+.segmented { flex:0 0 auto; display:flex; padding:2px; border-radius:9px;
+  background:var(--line); }
+.segmented button { min-width:54px; padding:5px 12px; border-radius:7px;
+  background:transparent; color:var(--muted); }
+.segmented button.active { background:var(--bg); color:var(--fg);
+  box-shadow:0 1px 3px rgba(0,0,0,.12); }
+
 /* 头条 —— 只放「现在就能动手」的量，且动作紧挨着它 */
 .hero { display:flex; align-items:center; gap:16px; background:var(--faint);
-  border-radius:16px; padding:22px 24px; margin-bottom:32px; }
+  border-radius:16px; padding:var(--hero-y) var(--hero-x);
+  margin-bottom:var(--hero-bottom); }
 .hero-num { font-size:38px; font-weight:600; letter-spacing:-.03em; line-height:1; }
 .hero-label { flex:1; font-size:13px; color:var(--muted); display:flex; flex-direction:column; gap:2px; }
+.hero-title { color:var(--fg); font-size:15px; font-weight:600; }
 .hero-sub { font-size:12px; opacity:.75; }
 .hero .primary { padding:10px 26px; font-size:14px; }
+.hero-clean { background:color-mix(in srgb,var(--ok) 7%,var(--faint)); }
+.hero-check { flex:0 0 auto; width:34px; height:34px; border-radius:50%;
+  display:grid; place-items:center; color:var(--ok);
+  background:color-mix(in srgb,var(--ok) 14%,transparent);
+  font-size:20px; font-weight:600; }
+.hero-spinner { flex:0 0 auto; width:28px; height:28px; border-radius:50%;
+  border:2px solid var(--line); border-top-color:var(--accent);
+  animation:hero-spin .8s linear infinite; }
+@keyframes hero-spin { to { transform:rotate(360deg); } }
 
-section { margin-bottom:28px; }
+section { margin-bottom:var(--section-bottom); }
 h2 { font-size:12px; font-weight:600; color:var(--muted); text-transform:none;
   letter-spacing:.02em; margin:0 0 10px; display:flex; align-items:center; gap:6px; }
 h2 em { font-style:normal; background:var(--faint); border-radius:10px;
   padding:1px 7px; font-size:11px; }
 
-.row { padding:11px 0; border-bottom:1px solid var(--line); }
+.row { padding:var(--row-y) 0; border-bottom:1px solid var(--line); }
 .row:last-child { border-bottom:0; }
-.row-main { display:flex; align-items:baseline; gap:10px; }
-.row-name { font-weight:500; font-size:13.5px; }
+.row-main { display:flex; align-items:center; gap:9px; }
+.row-name { min-width:0; max-width:46%; font-weight:500; font-size:13.5px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .row-branch { color:var(--muted); font-size:12px; flex:1;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .row-size { font-variant-numeric:tabular-nums; font-size:13px; color:var(--muted); }
 .row.ok .row-size { color:var(--ok); font-weight:500; }
+.row-status { flex:0 0 auto; padding:2px 7px; border-radius:999px;
+  font-size:10.5px; font-weight:500; line-height:1.45; }
+.row-status.info { color:var(--accent);
+  background:color-mix(in srgb,var(--accent) 10%,transparent); }
+.row-status.warn { color:var(--warn);
+  background:color-mix(in srgb,var(--warn) 10%,transparent); }
+.row-status.note { color:var(--note);
+  background:color-mix(in srgb,var(--note) 10%,transparent); }
+.row-status.neutral { color:var(--muted); background:var(--faint); }
 
 /* 体积要有视觉权重：22.4G 和 4.4M 长得一样，就找不到大头 */
 .bar { height:3px; background:var(--line); border-radius:2px; margin-top:7px; overflow:hidden; }
 .bar > div { height:100%; background:var(--bar); border-radius:2px; }
 .row.ok .bar > div { background:var(--ok); }
 
-.row-why { margin-top:7px; font-size:12.5px; color:var(--muted); }
+.row-why { margin-top:6px; font-size:12.5px; line-height:1.45; color:var(--muted);
+  overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
 .row-why.unknown { color:var(--warn); }
 /* 「那我该干嘛」——判定是机器的活，决定怎么办是人的活，界面得把选项摆出来 */
-.row-advice { margin-top:4px; font-size:12.5px; color:var(--accent); }
+.row-advice { display:flex; gap:7px; margin-top:3px; font-size:12.5px;
+  line-height:1.45; color:var(--muted); }
+.row-advice strong { flex:0 0 auto; color:var(--fg); font-weight:500; }
+.row-advice span { overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical;
+  -webkit-line-clamp:2; }
+
+@container (max-width: 420px) {
+  .hero:not(.hero-clean):not(.hero-scanning) {
+    display:grid; grid-template-columns:1fr auto; gap:10px 12px; }
+  .hero:not(.hero-clean):not(.hero-scanning) .hero-num {
+    grid-column:1; grid-row:1; align-self:center; }
+  .hero:not(.hero-clean):not(.hero-scanning) .hero-label {
+    grid-column:1 / -1; grid-row:2; }
+  .hero:not(.hero-clean):not(.hero-scanning) .primary {
+    grid-column:2; grid-row:1; }
+}
 
 .empty { color:var(--muted); font-size:13px; padding:20px 0; }
 .empty code { background:var(--faint); padding:2px 6px; border-radius:4px; font-size:12px; }
@@ -120,17 +180,52 @@ h2 em { font-style:normal; background:var(--faint); border-radius:10px;
 
 @media (prefers-reduced-motion: reduce) {
   .chev, .collapsible-body, .collapsible-body > div > * { transition:none; }
+  .hero-spinner { animation:none; }
 }
 
-/* ── 主区 + 右侧工程栏 ─────────────────────────────────────
+/* ── 主区 + 可切换位置的工程栏 ─────────────────────────────
    配置和处置是两种节奏：仓库清单几周动一次，待处理每天看一次。
    混在同一条纵向流里，配置会一直占着版面。拆成侧栏后主区只回答「现在该做什么」。 */
-.shell { display:grid; grid-template-columns:1fr 0px; height:100vh;
+.shell {
+  --sidebar-width:268px;
+  --main-y:20px; --main-x:28px; --main-bottom:60px;
+  --header-bottom:24px; --section-bottom:28px;
+  --setting-y:16px; --setting-x:18px; --settings-section-gap:24px;
+  --hero-y:22px; --hero-x:24px; --hero-bottom:32px; --row-y:11px;
+  --sidebar-y:18px; --sidebar-x:18px; --sidebar-bottom:12px;
+  --sidebar-head-bottom:12px; --sidebar-footer-gap:10px;
+  --repo-y:7px; --repo-x:8px;
+  display:grid; grid-template-columns:1fr 0px; height:100vh;
   transition:grid-template-columns .28s cubic-bezier(.4,0,.2,1); }
-.shell:has(.sidebar.open) { grid-template-columns:1fr 268px; }
+.shell.density-compact {
+  --main-y:14px; --main-x:20px; --main-bottom:40px;
+  --header-bottom:16px; --section-bottom:20px;
+  --setting-y:12px; --setting-x:14px; --settings-section-gap:18px;
+  --hero-y:16px; --hero-x:18px; --hero-bottom:22px; --row-y:7px;
+  --sidebar-y:12px; --sidebar-x:14px; --sidebar-bottom:10px;
+  --sidebar-head-bottom:8px; --sidebar-footer-gap:8px;
+  --repo-y:4px; --repo-x:6px;
+}
+.shell.density-comfortable {
+  --main-y:26px; --main-x:36px; --main-bottom:72px;
+  --header-bottom:32px; --section-bottom:36px;
+  --setting-y:20px; --setting-x:22px; --settings-section-gap:30px;
+  --hero-y:28px; --hero-x:30px; --hero-bottom:40px; --row-y:15px;
+  --sidebar-y:24px; --sidebar-x:22px; --sidebar-bottom:16px;
+  --sidebar-head-bottom:16px; --sidebar-footer-gap:14px;
+  --repo-y:10px; --repo-x:10px;
+}
+.shell:has(.sidebar.open) { grid-template-columns:1fr var(--sidebar-width); }
+.shell.sidebar-left { grid-template-columns:0px 1fr; }
+.shell.sidebar-left:has(.sidebar.open) { grid-template-columns:var(--sidebar-width) 1fr; }
+.shell.sidebar-left main { grid-column:2; grid-row:1; }
+.shell.sidebar-resizing { cursor:col-resize; user-select:none;
+  transition:none; }
 
 .sidebar { position:relative; border-left:1px solid var(--line);
   background:var(--faint); min-width:0; }
+.shell.sidebar-left .sidebar { grid-column:1; grid-row:1;
+  border-left:0; border-right:1px solid var(--line); }
 
 /* 收起后仅剩这个把手露在外面。做成竖条而不是小图标，
    是因为收起状态下它是唯一的入口，太小会找不到。 */
@@ -138,63 +233,121 @@ h2 em { font-style:normal; background:var(--faint); border-radius:10px;
    但侧栏收起后那条边界就是屏幕右缘，把手会有一半在视口外点不到——
    而收起状态下它是唯一的入口。 */
 .sidebar-handle { position:absolute; left:-28px; top:50%; transform:translateY(-50%);
-  width:26px; height:56px; border-radius:8px; z-index:2;
+  width:26px; height:56px; border-radius:8px; z-index:4;
   background:var(--bg); border:1px solid var(--line); color:var(--muted);
   display:grid; place-items:center; padding:0; box-shadow:0 2px 8px rgba(0,0,0,.06); }
 .sidebar.open .sidebar-handle { left:-13px; }
-.sidebar-handle { transition:left .28s cubic-bezier(.4,0,.2,1); }
+.sidebar-handle { transition:left .28s cubic-bezier(.4,0,.2,1),
+  right .28s cubic-bezier(.4,0,.2,1); }
 .sidebar-handle:hover { color:var(--fg); border-color:var(--muted); }
 .sidebar-handle .chev { font-size:16px; width:auto;
   transition:transform .28s cubic-bezier(.4,0,.2,1); }
 .sidebar-handle .chev.open { transform:rotate(180deg); }
+.shell.sidebar-left .sidebar-handle { left:auto; right:-28px; }
+.shell.sidebar-left .sidebar.open .sidebar-handle { left:auto; right:-13px; }
+.shell.sidebar-left .sidebar-handle .chev { transform:rotate(180deg); }
+.shell.sidebar-left .sidebar-handle .chev.open { transform:rotate(0); }
+
+.sidebar-resizer { position:absolute; left:-4px; top:0; bottom:0; width:8px;
+  z-index:3; cursor:col-resize; touch-action:none; pointer-events:none; outline:none; }
+.sidebar.open .sidebar-resizer { pointer-events:auto; }
+.sidebar-resizer::after { content:""; position:absolute; left:3px; top:0; bottom:0;
+  width:2px; background:transparent; transition:background .15s; }
+.sidebar-resizer:hover::after, .sidebar-resizer:focus-visible::after,
+.shell.sidebar-resizing .sidebar-resizer::after {
+  background:color-mix(in srgb,var(--accent) 45%,transparent); }
+.shell.sidebar-left .sidebar-resizer { left:auto; right:-4px; }
+.shell.sidebar-left .sidebar-resizer::after { left:auto; right:3px; }
 
 /* 内容宽度写死，避免侧栏在动画过程中被挤压导致文字回流抖动 */
-.sidebar-inner { width:268px; height:100%; overflow-y:auto; padding:18px 18px 40px;
-  opacity:0; transition:opacity .16s; }
+.sidebar-inner { width:var(--sidebar-width); height:100%; overflow:hidden;
+  padding:var(--sidebar-y) var(--sidebar-x) var(--sidebar-bottom);
+  display:flex; flex-direction:column; opacity:0; transition:opacity .16s; }
 .sidebar.open .sidebar-inner { opacity:1; transition:opacity .22s .1s; }
+.shell.sidebar-resizing .sidebar-inner { transition:none; }
 
 .sidebar-head { display:flex; align-items:center; justify-content:space-between;
-  gap:8px; margin-bottom:12px; }
+  gap:8px; margin-bottom:var(--sidebar-head-bottom); }
 .sidebar-head h2 { font-size:12px; font-weight:600; color:var(--muted); margin:0; }
-.sidebar-body { display:flex; flex-direction:column; }
+.sidebar-body { display:flex; flex:1; min-height:0; flex-direction:column; overflow-y:auto; }
+.sidebar-footer { flex:0 0 auto; display:flex; align-items:center; justify-content:flex-end;
+  gap:4px;
+  padding-top:var(--sidebar-footer-gap); margin-top:var(--sidebar-footer-gap);
+  border-top:1px solid var(--line); }
+.sidebar-footer-icon { width:30px; height:30px; padding:0; border-radius:7px;
+  display:grid; place-items:center; background:transparent; color:var(--muted); }
+.sidebar-footer-icon:hover, .sidebar-footer-icon.active { background:var(--bg); color:var(--fg); }
+.sidebar-footer-icon svg { width:17px; height:17px; fill:none; stroke:currentColor;
+  stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
 
 /* 窄窗口下侧栏改为浮层，不再挤压主区——720px 以下主区再被切走 268px 就没法看了 */
 @media (max-width: 720px) {
   .shell, .shell:has(.sidebar.open) { grid-template-columns:1fr 0px; }
-  .sidebar.open { position:fixed; right:0; top:0; bottom:0; width:268px;
+  .shell.sidebar-left, .shell.sidebar-left:has(.sidebar.open) {
+    grid-template-columns:0px 1fr; }
+  .sidebar.open { position:fixed; right:0; top:0; bottom:0; width:var(--sidebar-width);
     box-shadow:-8px 0 30px rgba(0,0,0,.18); z-index:10; }
+  .shell.sidebar-left .sidebar.open { left:0; right:auto;
+    box-shadow:8px 0 30px rgba(0,0,0,.18); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .shell, .sidebar-inner, .sidebar-handle .chev { transition:none; }
+  .shell, .sidebar-inner, .sidebar-handle .chev, .sidebar-resizer::after { transition:none; }
 }
 
 /* ── 侧栏条目 ──────────────────────────────────────────────
    名字和路径分两行：路径从中间截断恰好会把仓库名切掉，
    而那是用户唯一需要认出来的东西。名字永不截断，路径截了也无所谓。 */
-.repo-card { padding:11px 10px; border-radius:9px; margin:0 -10px;
-  transition:background .15s; }
-.repo-card:hover { background:var(--bg); }
-.repo-top { display:flex; align-items:center; gap:8px; }
-.repo-name { font-size:13px; font-weight:500; flex:1; min-width:0;
+.repo-card { position:relative; flex:0 0 auto;
+  padding:calc(var(--repo-y) + 2px) calc(var(--repo-x) + 4px);
+  border-radius:10px; margin:2px 0;
+  transition:background .15s,opacity .15s; cursor:grab; user-select:none; touch-action:none; }
+.repo-card:hover, .repo-card:focus-within {
+  background:color-mix(in srgb,var(--fg) 5%,var(--faint)); }
+.repo-card.dragging { opacity:.22; cursor:grabbing; }
+.repo-card.drop-before::before, .repo-card.drop-after::after {
+  content:""; position:absolute; left:-2px; right:-2px; height:2px;
+  border-radius:1px; background:var(--accent); }
+.repo-card.drop-before::before { top:-1px; }
+.repo-card.drop-after::after { bottom:-1px; }
+.repo-top { display:flex; align-items:center; gap:7px; min-height:20px; }
+.repo-icon { position:relative; flex:0 0 auto; width:13px; height:9px;
+  border:1px solid var(--muted); border-radius:2px; opacity:.8; }
+.repo-icon::before { content:""; position:absolute; left:1px; top:-4px; width:6px; height:4px;
+  border:1px solid var(--muted); border-bottom:0; border-radius:2px 2px 0 0;
+  background:inherit; }
+.repo-name { font-size:12.5px; font-weight:500; flex:1; min-width:0;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-/* 只放父目录，短到不需要截断。之前试过 direction:rtl 从左侧截断，
-   但它会把前导的 `~/` 一起翻转，渲染成 `Dev/tsz-core/tsz-rust/~`。 */
-.repo-path { font-size:11px; color:var(--muted); margin-top:1px;
-  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-  font-family:ui-monospace,SFMono-Regular,monospace; }
-.repo-stat { font-size:11px; color:var(--muted); margin-top:5px; }
+.repo-meta { display:flex; gap:4px; min-width:0; margin:0 0 0 20px;
+  color:var(--muted); font-size:10.5px; white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis; }
+.repo-meta > span:first-child { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.repo-meta > span:not(:first-child) { flex:0 0 auto; }
 .repo-free { color:var(--ok); }
+.repo-drag-preview { position:fixed; z-index:100; pointer-events:none;
+  display:flex; align-items:center; gap:7px; padding:7px 8px; border-radius:7px;
+  color:var(--fg); background:color-mix(in srgb,var(--faint) 88%,transparent);
+  box-shadow:0 8px 24px rgba(0,0,0,.16); backdrop-filter:blur(10px);
+  opacity:.94; font-size:12.5px; font-weight:500; }
 
 /* 移除按钮平时不出现。每行都挂一个「移除」等于每行都在喊，
    而移除是几周才做一次的事。 */
-.x { background:transparent; color:var(--muted); width:20px; height:20px;
-  padding:0; font-size:17px; line-height:1; border-radius:5px;
+.x { background:transparent; color:var(--muted); width:18px; height:18px;
+  padding:0; font-size:16px; line-height:1; border-radius:5px;
   display:grid; place-items:center; opacity:0; transition:opacity .15s,color .15s; }
-.repo-card:hover .x { opacity:1; }
+.repo-card:hover .x, .repo-card:focus-within .x { opacity:.6; }
+.repo-card .x:hover, .repo-card .x:focus-visible { opacity:1; }
 .x:hover { color:#ff3b30; background:color-mix(in srgb,#ff3b30 10%,transparent); }
 
 .side-note { color:var(--muted); font-size:12px; margin:8px 0 0; }
-.side-foot { color:var(--muted); font-size:11px; margin:18px 0 0;
-  padding-top:12px; border-top:1px solid var(--line); }
-.side-foot code { background:var(--bg); padding:1px 5px; border-radius:3px; }
+.switch { flex:0 0 auto; width:38px; height:22px; padding:2px; border-radius:11px;
+  background:var(--bar); transition:background .18s; }
+.switch > span { display:block; width:18px; height:18px; border-radius:50%;
+  background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.25);
+  transition:transform .18s cubic-bezier(.4,0,.2,1); }
+.switch.on { background:var(--ok); }
+.switch.on > span { transform:translateX(16px); }
+
+@media (prefers-reduced-motion: reduce) {
+  .switch, .switch > span { transition:none; }
+}

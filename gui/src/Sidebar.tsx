@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 /**
- * 右侧可收起的工程栏。
+ * 可收起的工程栏；具体放在左侧还是右侧由外层布局决定。
  *
  * 仓库管理原本排在主内容下方，等于把「配置」和「今天要处理什么」混在一条时间线上，
  * 而这两件事的节奏完全不同：配置几周动一次，处置每天看一次。
@@ -10,14 +10,20 @@ import type { ReactNode } from "react";
 export function Sidebar({
   open,
   onToggle,
+  collapseLabel,
   title,
   action,
+  resizer,
+  footer,
   children,
 }: {
   open: boolean;
   onToggle: () => void;
+  collapseLabel: string;
   title: string;
   action?: ReactNode;
+  resizer?: ReactNode;
+  footer?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -27,10 +33,12 @@ export function Sidebar({
         className="sidebar-handle"
         onClick={onToggle}
         aria-expanded={open}
-        title={open ? "收起" : title}
+        title={open ? collapseLabel : title}
       >
         <span className={`chev ${open ? "open" : ""}`}>‹</span>
       </button>
+
+      {resizer}
 
       <div className="sidebar-inner">
         <div className="sidebar-head">
@@ -38,6 +46,7 @@ export function Sidebar({
           {action}
         </div>
         <div className="sidebar-body">{children}</div>
+        {footer && <div className="sidebar-footer">{footer}</div>}
       </div>
     </aside>
   );

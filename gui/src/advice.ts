@@ -4,25 +4,46 @@
 // 判定本身是机器的活，决定怎么办是人的活——界面至少要把选项摆出来。
 
 import type { GateDetail, GateStatus } from "./types";
+import type { Language } from "./i18n";
 
-export function adviceFor(d: GateDetail): string | null {
+export function adviceFor(d: GateDetail, language: Language = "zh"): string | null {
+  const zh = language === "zh";
   if ("ProcessesActive" in d)
-    return "等它跑完，或先停掉那些进程再回来";
+    return zh
+      ? "等待相关任务结束，或关闭正在使用此工作区的程序，然后重新扫描。"
+      : "Wait for related tasks to finish, or close the programs using this worktree, then rescan.";
   if ("NotLanded" in d)
-    return `把这个分支合进 ${d.NotLanded.baseline}，或确认放弃后手动删除`;
+    return zh
+      ? `先将此分支合并到 ${d.NotLanded.baseline}；如果确认不再需要，请手动删除此工作区。`
+      : `Merge this branch into ${d.NotLanded.baseline} first. If it is no longer needed, remove the worktree manually.`;
   if ("UncommittedChanges" in d)
-    return "先提交或暂存这些改动；只想腾空间的话，回收它的构建缓存不受影响";
+    return zh
+      ? "先提交或暂存这些改动，再决定是否删除此工作区。"
+      : "Commit or stash these changes before deciding whether to remove this worktree.";
   if ("PreciousFiles" in d)
-    return "这些文件主仓没有，删了不可恢复。确认不需要后再处理";
+    return zh
+      ? "先备份这些文件，或确认不再需要后再处理此工作区。"
+      : "Back up these files, or confirm they are no longer needed before handling this worktree.";
   if ("NestedWorktrees" in d)
-    return "先处理里面那些工作区，外层才能删";
+    return zh
+      ? "先移除或迁移内部工作区，再处理外层工作区。"
+      : "Remove or relocate the nested worktrees before handling the outer worktree.";
   if ("OperationInProgress" in d)
-    return `先把 ${d.OperationInProgress.kind} 收尾（继续或 --abort）`;
+    return zh
+      ? `先完成或中止 ${d.OperationInProgress.kind} 操作，然后重新扫描。`
+      : `Finish or abort the ${d.OperationInProgress.kind} operation, then rescan.`;
   if ("WorktreeLocked" in d)
-    return "确认可以动后 git worktree unlock";
+    return zh
+      ? "确认可以处理后，先运行 git worktree unlock 解锁。"
+      : "Once it is safe to proceed, run git worktree unlock first.";
   if ("RecentlyModified" in d)
-    return "刚写过，稍后再试";
-  if ("NotPureCache" in d) return null;
+    return zh
+      ? "等待一段时间，确认没有程序继续写入后再重新扫描。"
+      : "Wait until no program is writing to the worktree, then rescan.";
+  if ("NotPureCache" in d)
+    return zh
+      ? "先确认该目录只包含可以重新生成的文件；不确定时请保留。"
+      : "Confirm the directory contains only reproducible files. Keep it if you are unsure.";
   return null;
 }
 

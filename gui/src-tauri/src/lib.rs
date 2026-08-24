@@ -12,6 +12,7 @@
 //!    就会把「本地来源的自定义命令免 ACL」这条豁免整体关掉，之后每个
 //!    `#[tauri::command]` 都要显式授权，否则全部 `not allowed by ACL`。
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -25,17 +26,62 @@ use wtgc::plan::{Plan, Selection, plan};
 use wtgc::scan::{Env, scan};
 use wtgc::{discover, forge, git, platform};
 
-/// 扫描给定仓库。**只读**，不做任何破坏性动作。
-#[tauri::command]
-async fn scan_repos(repos: Vec<String>, offline: bool) -> Result<ScanReport, String> {
-    tauri::async_runtime::spawn_blocking(move || run_scan(repos, offline))
-        .await
-        .map_err(|e| format!("扫描任务异常终止: {e}"))?
+mod daily;
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum UiLanguage {
+    Zh,
+    En,
 }
 
-fn run_scan(repos: Vec<String>, offline: bool) -> Result<ScanReport, String> {
-    let git_exe = git::exe::resolve("git")
-        .ok_or_else(|| "找不到 git。它是硬依赖，请先安装。".to_string())?;
+impl UiLanguage {
+    fn code(self) -> &'static str {
+        match self {
+            Self::Zh => "zh",
+            Self::En => "en",
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct LocalizedError {
+    zh: String,
+    en: String,
+}
+
+impl LocalizedError {
+    fn new(zh: impl Into<String>, en: impl Into<String>) -> Self {
+        Self {
+            zh: zh.into(),
+            en: en.into(),
+        }
+    }
+
+    fn text(&self, language: UiLanguage) -> &str {
+        match language {
+            UiLanguage::Zh => &self.zh,
+            UiLanguage::En => &self.en,
+        }
+    }
+}
+
+/// 扫描给定仓库。**只读**，不做任何破坏性动作。
+#[tauri::command]
+async fn scan_repos(repos: Vec<String>, offline: bool) -> Result<ScanReport, LocalizedError> {
+    tauri::async_runtime::spawn_blocking(move || run_scan(repos, offline))
+        .await
+        .map_err(|e| LocalizedError::new(
+            format!("扫描任务异常终止：{e}"),
+            format!("The scan task terminated unexpectedly: {e}"),
+        ))?
+}
+
+fn run_scan(repos: Vec<String>, offline: bool) -> Result<ScanReport, LocalizedError> {
+    let git_exe = git::exe::resolve("git").ok_or_else(|| LocalizedError::new(
+        "找不到 git。它是硬依赖，请先安装。",
+        "Git was not found. Install Git before scanning.",
+    ))?;
 
     let mut cfg = ScanConfig {
         repos: repos.into_iter().map(PathBuf::from).collect(),
@@ -89,17 +135,30 @@ fn read_repos() -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn write_repos(list: &[String]) -> Result<(), String> {
-    let path = repos_file().ok_or("找不到 HOME，无法定位配置文件")?;
+fn write_repos(list: &[String]) -> Result<(), LocalizedError> {
+    let path = repos_file().ok_or_else(|| LocalizedError::new(
+        "找不到 HOME，无法定位配置文件",
+        "HOME is not available, so the repository configuration file could not be located.",
+    ))?;
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("建目录失败: {e}"))?;
+        std::fs::create_dir_all(dir).map_err(|e| LocalizedError::new(
+            format!("创建配置目录失败：{e}"),
+            format!("Could not create the configuration directory: {e}"),
+        ))?;
     }
     // 保留说明性注释：这个文件用户也会手动编辑，写回时把来龙去脉留下
-    let body = format!(
-        "# wtgc 要扫的仓库，一行一个。# 开头是注释。\n         # GUI 和每日体检读的是同一份清单，改哪边都一样。\n         # 只需列「不在已知 agent 落点下」的仓库——~/.codex/worktrees 之类会被自动发现。\n{}\n",
+    std::fs::write(&path, render_repos(list))
+        .map_err(|e| LocalizedError::new(
+            format!("写入 {} 失败：{e}", path.display()),
+            format!("Could not write {}: {e}", path.display()),
+        ))
+}
+
+fn render_repos(list: &[String]) -> String {
+    format!(
+        "# wtgc 要扫的仓库，一行一个。# 开头是注释。\n# GUI 和每日体检读的是同一份清单，改哪边都一样。\n# 只需列「不在已知 agent 落点下」的仓库——~/.codex/worktrees 之类会被自动发现。\n{}\n",
         list.join("\n")
-    );
-    std::fs::write(&path, body).map_err(|e| format!("写入 {} 失败: {e}", path.display()))
+    )
 }
 
 #[tauri::command]
@@ -110,15 +169,21 @@ fn default_repos() -> Vec<String> {
 /// 加一个仓库。**先验证再写入**——把一个非 git 目录静默加进去，
 /// 结果是每次扫描都多一条「未识别主干」的噪音，而用户不知道为什么。
 #[tauri::command]
-fn add_repo(path: String) -> Result<Vec<String>, String> {
+fn add_repo(path: String) -> Result<Vec<String>, LocalizedError> {
     let p = PathBuf::from(&path);
     let canonical = p
         .canonicalize()
-        .map_err(|e| format!("路径不可用: {e}"))?
+        .map_err(|e| LocalizedError::new(
+            format!("路径不可用：{e}"),
+            format!("The selected path is unavailable: {e}"),
+        ))?
         .to_string_lossy()
         .into_owned();
 
-    let git_exe = git::exe::resolve("git").ok_or("找不到 git")?;
+    let git_exe = git::exe::resolve("git").ok_or_else(|| LocalizedError::new(
+        "找不到 git",
+        "Git was not found.",
+    ))?;
     let runner = git::RealGit::new(git_exe, Duration::from_secs(10));
 
     // 用 --show-toplevel 而不是判断 .git 是否存在：
@@ -127,32 +192,65 @@ fn add_repo(path: String) -> Result<Vec<String>, String> {
         use wtgc::git::GitRunner;
         runner
             .exec(&PathBuf::from(&canonical), &["rev-parse", "--show-toplevel"])
-            .map_err(|e| format!("{e:?}"))?
+            .map_err(|e| LocalizedError::new(
+                format!("Git 仓库检查失败：{e:?}"),
+                format!("The Git repository check failed: {e:?}"),
+            ))?
     };
     if out.code != Some(0) {
-        return Err(format!("{canonical} 不是 git 仓库"));
+        return Err(LocalizedError::new(
+            format!("{canonical} 不是 Git 仓库"),
+            format!("{canonical} is not a Git repository."),
+        ));
     }
     let root = out.stdout_utf8().trim().to_string();
     if root.is_empty() {
-        return Err("无法确定仓库根目录".into());
+        return Err(LocalizedError::new(
+            "无法确定仓库根目录",
+            "The repository root could not be determined.",
+        ));
     }
 
     let mut list = read_repos();
     if list.iter().any(|r| r == &root) {
-        return Err(format!("{root} 已经在清单里了"));
+        return Err(LocalizedError::new(
+            format!("{root} 已经在清单里了"),
+            format!("{root} is already monitored."),
+        ));
     }
     list.push(root);
-    list.sort();
     write_repos(&list)?;
     Ok(list)
 }
 
 #[tauri::command]
-fn remove_repo(path: String) -> Result<Vec<String>, String> {
+fn remove_repo(path: String) -> Result<Vec<String>, LocalizedError> {
     let mut list = read_repos();
     list.retain(|r| r != &path);
     write_repos(&list)?;
     Ok(list)
+}
+
+/// 只接受现有仓库的排列，避免前端绕过 `add_repo` 的 git 仓库校验。
+#[tauri::command]
+fn reorder_repos(repos: Vec<String>) -> Result<Vec<String>, LocalizedError> {
+    let current = read_repos();
+    if !same_repo_items(&current, &repos) {
+        return Err(LocalizedError::new(
+            "排序列表与当前监控的仓库不一致，请刷新后重试",
+            "The repository list changed while it was being reordered. Refresh and try again.",
+        ));
+    }
+    write_repos(&repos)?;
+    Ok(repos)
+}
+
+fn same_repo_items(left: &[String], right: &[String]) -> bool {
+    let mut left = left.to_vec();
+    let mut right = right.to_vec();
+    left.sort();
+    right.sort();
+    left == right
 }
 
 /// 已创建但尚未执行的计划。
@@ -178,7 +276,7 @@ struct PlanItem {
     bytes: u64,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Serialize)]
 struct ApplySummary {
     done: usize,
     stale: usize,
@@ -186,7 +284,13 @@ struct ApplySummary {
     /// 执行前后实测的可用空间差。**不报 du 的估算**——
     /// APFS 写时复制会让估算系统性偏高，数字对不上就会丢掉信任。
     measured_freed: i64,
-    lines: Vec<String>,
+    lines: Vec<LocalizedLine>,
+}
+
+#[derive(Serialize)]
+struct LocalizedLine {
+    zh: String,
+    en: String,
 }
 
 /// 从一次扫描结果构造计划。`kind` 为 "reclaim" 或 "remove"。
@@ -196,10 +300,13 @@ async fn create_plan(
     repos: Vec<String>,
     kind: String,
     include_main: bool,
-) -> Result<PlanSummary, String> {
+) -> Result<PlanSummary, LocalizedError> {
     let report = tauri::async_runtime::spawn_blocking(move || run_scan(repos, false))
         .await
-        .map_err(|e| format!("扫描任务异常终止: {e}"))??;
+        .map_err(|e| LocalizedError::new(
+            format!("扫描任务异常终止：{e}"),
+            format!("The scan task terminated unexpectedly: {e}"),
+        ))??;
 
     let all = Selection::everything_allowed(&report, include_main);
     let sel = Selection {
@@ -237,14 +344,23 @@ async fn create_plan(
 async fn apply_plan(
     store: tauri::State<'_, PlanStore>,
     id: String,
-) -> Result<ApplySummary, String> {
+) -> Result<ApplySummary, LocalizedError> {
     let p = {
-        let mut g = store.0.lock().map_err(|_| "计划存储被污染".to_string())?;
-        g.remove(&id).ok_or("计划已失效，请重新扫描")?
+        let mut g = store.0.lock().map_err(|_| LocalizedError::new(
+            "计划存储不可用，请重新启动应用",
+            "The reclaim plan store is unavailable. Restart the app and try again.",
+        ))?;
+        g.remove(&id).ok_or_else(|| LocalizedError::new(
+            "计划已失效，请重新扫描",
+            "This reclaim plan has expired. Rescan and try again.",
+        ))?
     };
 
-    tauri::async_runtime::spawn_blocking(move || {
-        let git_exe = git::exe::resolve("git").ok_or("找不到 git")?;
+    tauri::async_runtime::spawn_blocking(move || -> Result<ApplySummary, LocalizedError> {
+        let git_exe = git::exe::resolve("git").ok_or_else(|| LocalizedError::new(
+            "找不到 git",
+            "Git was not found.",
+        ))?;
         let env = Env {
             git: Box::new(git::RealGit::new(git_exe, Duration::from_secs(30))),
             forge: Box::new(forge::Offline),
@@ -265,11 +381,20 @@ async fn apply_plan(
         for r in &out.results {
             let name = shorten(r.action.target());
             match &r.outcome {
-                Outcome::Done { .. } => lines.push(format!("✅ {name}")),
-                Outcome::Stale { what } => lines.push(format!("⏭ {name}：{what}")),
+                Outcome::Done { .. } => lines.push(LocalizedLine {
+                    zh: format!("✅ {name}"),
+                    en: format!("✅ {name}"),
+                }),
+                Outcome::Stale { what } => lines.push(LocalizedLine {
+                    zh: format!("⏭ {name}：{what}"),
+                    en: format!("⏭ {name}: skipped because its safety state changed"),
+                }),
                 Outcome::Failed(c) => {
                     failed += 1;
-                    lines.push(format!("⚠️ {name}：{c:?}"));
+                    lines.push(LocalizedLine {
+                        zh: format!("⚠️ {name}：{c:?}"),
+                        en: format!("⚠️ {name}: reclaim failed"),
+                    });
                 }
                 Outcome::Simulated => {}
             }
@@ -283,7 +408,10 @@ async fn apply_plan(
         })
     })
     .await
-    .map_err(|e| format!("执行任务异常终止: {e}"))?
+    .map_err(|e| LocalizedError::new(
+        format!("执行任务异常终止：{e}"),
+        format!("The reclaim task terminated unexpectedly: {e}"),
+    ))?
 }
 
 /// 末两段路径。多个 agent worktree 常同名，只显示 basename 分不清。
@@ -308,9 +436,50 @@ pub fn run() {
             default_repos,
             add_repo,
             remove_repo,
+            reorder_repos,
+            daily::daily_check_status,
+            daily::set_daily_check_enabled,
+            daily::set_ui_language,
             create_plan,
             apply_plan
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+pub use daily::run_daily_check;
+
+#[cfg(test)]
+mod tests {
+    use super::{LocalizedError, UiLanguage, render_repos, same_repo_items};
+
+    #[test]
+    fn command_errors_expose_both_languages_to_the_webview() {
+        let error = LocalizedError::new("中文错误", "English error");
+        let json = serde_json::to_value(&error).expect("序列化错误");
+
+        assert_eq!(json["zh"], "中文错误");
+        assert_eq!(json["en"], "English error");
+        assert_eq!(error.text(UiLanguage::En), "English error");
+    }
+
+    #[test]
+    fn repo_order_may_change_but_items_must_not() {
+        let current = vec!["/repo/a".into(), "/repo/b".into()];
+        assert!(same_repo_items(
+            &current,
+            &["/repo/b".into(), "/repo/a".into()]
+        ));
+        assert!(!same_repo_items(
+            &current,
+            &["/repo/a".into(), "/repo/c".into()]
+        ));
+    }
+
+    #[test]
+    fn repo_file_comments_start_at_column_zero() {
+        let rendered = render_repos(&["/repo/b".into(), "/repo/a".into()]);
+        assert!(rendered.lines().take(3).all(|line| line.starts_with('#')));
+        assert!(rendered.ends_with("/repo/b\n/repo/a\n"));
+    }
 }
