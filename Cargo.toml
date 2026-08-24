@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.85"
 description = "Reclaim disk space from git worktrees left behind by AI coding agents — safely."
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/darwish/worktree-gc"
+repository = "https://github.com/LonelyFellas/worktree-gc"
 keywords = ["git", "worktree", "disk", "cleanup", "agent"]
 categories = ["command-line-utilities", "development-tools"]
 # gui/ 是独立的 Tauri crate，不属于本包。不排除的话 cargo 会把 src-tauri 的源文件

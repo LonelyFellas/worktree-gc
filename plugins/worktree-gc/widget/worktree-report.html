@@ -1,0 +1,735 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Worktree GC</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f4f6f4;
+        --surface: rgba(255, 255, 255, 0.92);
+        --surface-strong: #ffffff;
+        --text: #17211b;
+        --muted: #65726a;
+        --line: #dbe2dc;
+        --accent: #17734a;
+        --accent-soft: #e3f3e9;
+        --warn: #a25b0b;
+        --warn-soft: #fff0d8;
+        --danger: #b23a3a;
+        --danger-soft: #fbe5e5;
+        --neutral-soft: #edf0ee;
+        --shadow: 0 10px 30px rgba(20, 42, 29, 0.07);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #111613;
+          --surface: rgba(26, 33, 29, 0.94);
+          --surface-strong: #1d2520;
+          --text: #ecf4ef;
+          --muted: #9caaa1;
+          --line: #344139;
+          --accent: #65d49a;
+          --accent-soft: #173d2a;
+          --warn: #f2b561;
+          --warn-soft: #493319;
+          --danger: #f28c8c;
+          --danger-soft: #4b2525;
+          --neutral-soft: #2a332e;
+          --shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 0 0, color-mix(in srgb, var(--accent) 9%, transparent), transparent 34%),
+          var(--bg);
+        color: var(--text);
+        font-family:
+          ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-size: 14px;
+      }
+
+      button {
+        font: inherit;
+      }
+
+      .shell {
+        width: min(960px, 100%);
+        margin: 0 auto;
+        padding: 18px;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+      }
+
+      .brand-mark {
+        display: grid;
+        width: 38px;
+        height: 38px;
+        place-items: center;
+        border-radius: 12px;
+        background: var(--accent);
+        color: white;
+        box-shadow: var(--shadow);
+      }
+
+      .brand-mark svg {
+        width: 21px;
+        height: 21px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 19px;
+        letter-spacing: -0.02em;
+      }
+
+      .subtitle {
+        margin: 3px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .mode {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 7px 10px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--surface);
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .mode::before {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--accent);
+        content: "";
+      }
+
+      .summary {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 9px;
+        margin-bottom: 14px;
+      }
+
+      .metric {
+        min-width: 0;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 13px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .metric strong {
+        display: block;
+        margin-bottom: 2px;
+        font-size: 22px;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: -0.035em;
+      }
+
+      .metric span {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .metric.action strong {
+        color: var(--accent);
+      }
+
+      .metric.attention strong {
+        color: var(--warn);
+      }
+
+      .toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin: 0 0 12px;
+      }
+
+      .filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+      }
+
+      .filter {
+        padding: 7px 10px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: var(--surface);
+        color: var(--muted);
+        cursor: pointer;
+      }
+
+      .filter:hover,
+      .filter:focus-visible {
+        border-color: var(--accent);
+        outline: none;
+        color: var(--text);
+      }
+
+      .filter[aria-pressed="true"] {
+        border-color: color-mix(in srgb, var(--accent) 50%, var(--line));
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-weight: 650;
+      }
+
+      .disk {
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .repos {
+        display: grid;
+        gap: 11px;
+      }
+
+      .repo {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 15px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .repo-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+        background: color-mix(in srgb, var(--surface-strong) 88%, var(--accent-soft));
+      }
+
+      .repo-name {
+        min-width: 0;
+      }
+
+      .repo-name strong {
+        display: block;
+        overflow: hidden;
+        font-size: 14px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .path {
+        display: block;
+        overflow: hidden;
+        margin-top: 2px;
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 10px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .repo-count {
+        color: var(--muted);
+        font-size: 11px;
+        white-space: nowrap;
+      }
+
+      .worktrees {
+        display: grid;
+      }
+
+      .worktree {
+        padding: 13px 14px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .worktree:last-child {
+        border-bottom: 0;
+      }
+
+      .worktree-main {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .worktree-title {
+        min-width: 0;
+      }
+
+      .worktree-title-row {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 7px;
+      }
+
+      .worktree-title strong {
+        overflow: hidden;
+        max-width: 460px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .main-pill {
+        padding: 2px 6px;
+        border-radius: 6px;
+        background: var(--neutral-soft);
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .worktree-side {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        white-space: nowrap;
+      }
+
+      .size {
+        color: var(--muted);
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .verdict {
+        padding: 4px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 650;
+      }
+
+      .verdict.good {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      .verdict.warn {
+        background: var(--warn-soft);
+        color: var(--warn);
+      }
+
+      .verdict.bad {
+        background: var(--danger-soft);
+        color: var(--danger);
+      }
+
+      .verdict.neutral {
+        background: var(--neutral-soft);
+        color: var(--muted);
+      }
+
+      .gate-list,
+      .cache-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 9px;
+      }
+
+      .gate,
+      .cache {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 7px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface-strong);
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .gate::before,
+      .cache::before {
+        width: 6px;
+        height: 6px;
+        flex: 0 0 auto;
+        border-radius: 50%;
+        background: var(--danger);
+        content: "";
+      }
+
+      .gate.unknown::before {
+        background: var(--warn);
+      }
+
+      .cache.safe {
+        border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+        color: var(--accent);
+      }
+
+      .cache.safe::before {
+        background: var(--accent);
+      }
+
+      .empty,
+      .loading {
+        padding: 46px 18px;
+        border: 1px dashed var(--line);
+        border-radius: 15px;
+        color: var(--muted);
+        text-align: center;
+      }
+
+      .empty strong,
+      .loading strong {
+        display: block;
+        margin-bottom: 5px;
+        color: var(--text);
+      }
+
+      .footer {
+        margin-top: 11px;
+        color: var(--muted);
+        font-size: 10px;
+        text-align: right;
+      }
+
+      @media (max-width: 720px) {
+        .summary {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .summary .metric:first-child {
+          grid-column: span 2;
+        }
+
+        .toolbar,
+        .worktree-main {
+          align-items: stretch;
+          flex-direction: column;
+        }
+
+        .disk {
+          white-space: normal;
+        }
+
+        .worktree-side {
+          justify-content: space-between;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main id="app" class="shell">
+      <div class="loading">
+        <strong>正在等待扫描结果</strong>
+        MCP 客户端会在扫描完成后自动更新此页面。
+      </div>
+    </main>
+
+    <script>
+      const state = { data: null, filter: "all" };
+      const pendingRequests = new Map();
+      let nextRequestId = 1;
+      const gateLabels = {
+        Busy: "有进程占用",
+        Recent: "近期仍在写入",
+        CacheSafe: "不是纯构建缓存",
+        Dirty: "存在未提交改动",
+        Landed: "尚未进入主干",
+        Precious: "存在独有文件",
+        Nested: "包含嵌套仓库",
+        InProgress: "Git 操作进行中",
+        Locked: "worktree 已锁定",
+      };
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
+      function basename(path) {
+        const clean = String(path ?? "").replace(/\/$/, "");
+        return clean.split("/").pop() || clean || "未命名仓库";
+      }
+
+      function humanBytes(bytes) {
+        const value = Number(bytes || 0);
+        if (value < 1024) return `${value} B`;
+        const units = ["KB", "MB", "GB", "TB"];
+        let size = value;
+        let unit = -1;
+        do {
+          size /= 1024;
+          unit += 1;
+        } while (size >= 1024 && unit < units.length - 1);
+        const digits = size >= 10 ? 1 : 2;
+        return `${size.toFixed(digits)} ${units[unit]}`;
+      }
+
+      function verdictInfo(verdict) {
+        if (verdict === "Removable") {
+          return { key: "actionable", label: "可删除", tone: "good" };
+        }
+        if (verdict === "CacheReclaimable") {
+          return { key: "actionable", label: "缓存可回收", tone: "good" };
+        }
+        if (verdict && typeof verdict === "object" && "NeedsAttention" in verdict) {
+          return { key: "attention", label: "需确认", tone: "warn" };
+        }
+        if (verdict && typeof verdict === "object" && "Blocked" in verdict) {
+          return { key: "blocked", label: "已拦截", tone: "bad" };
+        }
+        if (verdict && typeof verdict === "object" && "Protected" in verdict) {
+          return { key: "protected", label: "受保护", tone: "neutral" };
+        }
+        return { key: "attention", label: "未知", tone: "warn" };
+      }
+
+      function statusKind(status) {
+        if (status === "Pass") return "pass";
+        if (status && typeof status === "object" && "Unknown" in status) return "unknown";
+        if (status && typeof status === "object" && "Blocked" in status) return "blocked";
+        return "unknown";
+      }
+
+      function failedGates(outcomes) {
+        return (outcomes || [])
+          .map((outcome) => ({
+            id: outcome.id,
+            kind: statusKind(outcome.status),
+          }))
+          .filter((outcome) => outcome.kind !== "pass");
+      }
+
+      function cacheIsSafe(cache) {
+        return (cache.outcomes || []).length > 0 &&
+          cache.outcomes.every((outcome) => outcome.status === "Pass");
+      }
+
+      function worktreeMatches(worktree) {
+        if (state.filter === "all") return true;
+        if (state.filter === "main") return Boolean(worktree.is_main);
+        const verdict = verdictInfo(worktree.verdict);
+        if (state.filter === "attention") {
+          return verdict.key === "attention" || verdict.key === "blocked";
+        }
+        if (state.filter === "actionable") {
+          return verdict.key === "actionable" || (worktree.caches || []).some(cacheIsSafe);
+        }
+        return true;
+      }
+
+      function metric(value, label, className = "") {
+        return `<div class="metric ${className}"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></div>`;
+      }
+
+      function renderWorktree(worktree) {
+        const verdict = verdictInfo(worktree.verdict);
+        const gates = failedGates(worktree.outcomes);
+        const branch = worktree.branch || basename(worktree.path);
+        const gateHtml = gates.length
+          ? `<div class="gate-list">${gates
+              .map(
+                (gate) =>
+                  `<span class="gate ${gate.kind === "unknown" ? "unknown" : ""}">${escapeHtml(gateLabels[gate.id] || gate.id)}</span>`,
+              )
+              .join("")}</div>`
+          : "";
+        const cacheHtml = (worktree.caches || []).length
+          ? `<div class="cache-list">${worktree.caches
+              .map((cache) => {
+                const safe = cacheIsSafe(cache);
+                const name = cache.kind?.name || basename(cache.path);
+                return `<span class="cache ${safe ? "safe" : ""}" title="${escapeHtml(cache.path)}">${escapeHtml(name)} · ${escapeHtml(humanBytes(cache.bytes))}${safe ? " · 可回收" : ""}</span>`;
+              })
+              .join("")}</div>`
+          : "";
+
+        return `
+          <article class="worktree">
+            <div class="worktree-main">
+              <div class="worktree-title">
+                <div class="worktree-title-row">
+                  <strong>${escapeHtml(branch)}</strong>
+                  ${worktree.is_main ? '<span class="main-pill">主工作区</span>' : ""}
+                </div>
+                <span class="path" title="${escapeHtml(worktree.path)}">${escapeHtml(worktree.path)}</span>
+              </div>
+              <div class="worktree-side">
+                <span class="size">${escapeHtml(humanBytes(worktree.bytes))}</span>
+                <span class="verdict ${verdict.tone}">${escapeHtml(verdict.label)}</span>
+              </div>
+            </div>
+            ${gateHtml}
+            ${cacheHtml}
+          </article>
+        `;
+      }
+
+      function renderRepo(repo) {
+        const worktrees = (repo.worktrees || []).filter(worktreeMatches);
+        if (!worktrees.length) return "";
+        return `
+          <section class="repo">
+            <header class="repo-head">
+              <div class="repo-name">
+                <strong>${escapeHtml(basename(repo.root))}</strong>
+                <span class="path" title="${escapeHtml(repo.root)}">${escapeHtml(repo.root)}</span>
+              </div>
+              <span class="repo-count">${worktrees.length} 个 worktree</span>
+            </header>
+            <div class="worktrees">${worktrees.map(renderWorktree).join("")}</div>
+          </section>
+        `;
+      }
+
+      function render() {
+        if (!state.data) return;
+        const { summary, report } = state.data;
+        const reposHtml = (report.repos || []).map(renderRepo).join("");
+        document.getElementById("app").innerHTML = `
+          <header class="topbar">
+            <div class="brand">
+              <div class="brand-mark" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M7 4v5a3 3 0 0 0 3 3h4a3 3 0 0 1 3 3v5" />
+                  <circle cx="7" cy="4" r="2" />
+                  <circle cx="17" cy="20" r="2" />
+                  <path d="M7 17v3M5 19h4" />
+                </svg>
+              </div>
+              <div>
+                <h1>Worktree GC</h1>
+                <p class="subtitle">本地 worktree 与构建缓存安全报告</p>
+              </div>
+            </div>
+            <span class="mode">只读 · 离线</span>
+          </header>
+
+          <section class="summary" aria-label="扫描汇总">
+            ${metric(summary.repositories, "仓库")}
+            ${metric(summary.worktrees, "worktree")}
+            ${metric(summary.reclaimable_caches, "可回收缓存", "action")}
+            ${metric(summary.removable_worktrees, "可删除", "action")}
+            ${metric(summary.needs_attention, "需人工确认", "attention")}
+          </section>
+
+          <div class="toolbar">
+            <div class="filters" aria-label="筛选 worktree">
+              ${[
+                ["all", "全部"],
+                ["actionable", "可处理"],
+                ["attention", "需关注"],
+                ["main", "主工作区"],
+              ]
+                .map(
+                  ([key, label]) =>
+                    `<button class="filter" data-filter="${key}" aria-pressed="${state.filter === key}">${label}</button>`,
+                )
+                .join("")}
+            </div>
+            <span class="disk">磁盘可用 ${escapeHtml(humanBytes(report.available_bytes))}</span>
+          </div>
+
+          <div class="repos">${reposHtml || '<div class="empty"><strong>当前筛选没有结果</strong>切换筛选条件查看其它 worktree。</div>'}</div>
+          <div class="footer">数据来自 wtgc 安全门禁；页面不会执行清理或删除。</div>
+        `;
+
+        document.querySelectorAll("[data-filter]").forEach((button) => {
+          button.addEventListener("click", () => {
+            state.filter = button.dataset.filter;
+            render();
+          });
+        });
+      }
+
+      function acceptToolResult(result) {
+        if (!result?.summary || !result?.report) return;
+        state.data = result;
+        render();
+      }
+
+      function sendRequest(method, params) {
+        const id = nextRequestId++;
+        return new Promise((resolve, reject) => {
+          pendingRequests.set(id, { resolve, reject });
+          window.parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
+        });
+      }
+
+      async function connectBridge() {
+        try {
+          await sendRequest("ui/initialize", {
+            appInfo: { name: "worktree-gc-report", version: "0.1.0" },
+            appCapabilities: {},
+            protocolVersion: "2026-01-26",
+          });
+          window.parent.postMessage(
+            {
+              jsonrpc: "2.0",
+              method: "ui/notifications/initialized",
+              params: {},
+            },
+            "*",
+          );
+        } catch {
+          document.getElementById("app").innerHTML = `
+            <div class="loading">
+              <strong>无法连接 MCP 页面宿主</strong>
+              请关闭此预览后重新打开。
+            </div>
+          `;
+        }
+      }
+
+      window.addEventListener(
+        "message",
+        (event) => {
+          if (event.source !== window.parent) return;
+          const message = event.data;
+          if (!message || message.jsonrpc !== "2.0") return;
+          if (message.id !== undefined && pendingRequests.has(message.id)) {
+            const pending = pendingRequests.get(message.id);
+            pendingRequests.delete(message.id);
+            if (message.error) pending.reject(message.error);
+            else pending.resolve(message.result);
+            return;
+          }
+          if (message.method === "ui/notifications/tool-result") {
+            acceptToolResult(message.params?.structuredContent);
+          }
+        },
+        { passive: true },
+      );
+
+      acceptToolResult(window.openai?.toolOutput);
+      void connectBridge();
+    </script>
+  </body>
+</html>

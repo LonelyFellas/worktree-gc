@@ -4,8 +4,26 @@
 
 Reclaim disk space from git worktrees left behind by AI coding agents — **safely**.
 
-> ⚠️ **Status: early development.** The safety-gate engine and its regression tests are
-> landing; the CLI is not wired up yet. Not usable as a tool today.
+> ⚠️ **Status: early development.** The CLI and read-only Codex plugin can scan and
+> explain local worktrees. Destructive CLI actions still require an explicit `--apply`.
+
+## Install the Codex plugin
+
+Install the local scanner:
+
+```bash
+cargo install --git https://github.com/LonelyFellas/worktree-gc --locked --bin wtgc
+```
+
+Then add the GitHub marketplace and install the plugin:
+
+```bash
+codex plugin marketplace add LonelyFellas/worktree-gc
+codex plugin add worktree-gc@worktree-gc
+```
+
+Restart the Codex desktop app, open a new task, and ask it to scan your local
+worktrees. The MCP integration is read-only and always runs offline.
 
 ## The problem
 

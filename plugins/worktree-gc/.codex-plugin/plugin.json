@@ -1,0 +1,35 @@
+{
+  "name": "worktree-gc",
+  "version": "0.1.0",
+  "description": "Inspect local Git worktrees and rebuildable caches without changing files.",
+  "author": {
+    "name": "LonelyFellas",
+    "url": "https://github.com/LonelyFellas"
+  },
+  "homepage": "https://github.com/LonelyFellas/worktree-gc",
+  "repository": "https://github.com/LonelyFellas/worktree-gc",
+  "keywords": [
+    "git",
+    "worktree",
+    "disk",
+    "cleanup",
+    "codex"
+  ],
+  "interface": {
+    "displayName": "Worktree GC",
+    "shortDescription": "Inspect local worktrees and build caches safely.",
+    "longDescription": "Scan local Git worktrees, explain every safety gate, and show rebuildable cache usage in a read-only dashboard.",
+    "developerName": "LonelyFellas",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read"
+    ],
+    "websiteURL": "https://github.com/LonelyFellas/worktree-gc",
+    "brandColor": "#16835E",
+    "defaultPrompt": [
+      "Scan my local worktrees and show what is using disk space.",
+      "Which worktrees or caches need my attention?"
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}

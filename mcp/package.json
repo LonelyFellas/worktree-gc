@@ -1,0 +1,35 @@
+{
+  "name": "@worktree-gc/mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "bundle:plugin": "node scripts/build-plugin.mjs",
+    "dev": "tsx src/server.ts",
+    "dev:stdio": "tsx src/stdio.ts",
+    "start": "node dist/server.js",
+    "test": "tsx --test src/*.test.ts",
+    "check": "pnpm run build && pnpm run bundle:plugin && pnpm test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.6",
+    "@types/node": "24.10.1",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.12",
+    "typescript": "7.0.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

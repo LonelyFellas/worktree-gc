@@ -4,8 +4,26 @@
 
 **安全地**回收 AI coding agent 留下的 git worktree 所占磁盘。
 
-> ⚠️ **状态：早期开发中。** 安全门禁引擎与其回归测试正在落地，CLI 尚未接线，
-> 目前还不能当工具用。
+> ⚠️ **状态：早期开发中。** CLI 与只读 Codex 插件已经可以扫描并解释本地
+> worktree；破坏性 CLI 操作仍然必须显式传入 `--apply`。
+
+## 安装 Codex 插件
+
+先安装本地扫描器：
+
+```bash
+cargo install --git https://github.com/LonelyFellas/worktree-gc --locked --bin wtgc
+```
+
+再添加 GitHub marketplace 并安装插件：
+
+```bash
+codex plugin marketplace add LonelyFellas/worktree-gc
+codex plugin add worktree-gc@worktree-gc
+```
+
+重启 Codex 桌面端并新建任务，然后让它扫描本地 worktree。MCP 集成只读，
+并且始终使用离线模式。
 
 ## 要解决的问题
 

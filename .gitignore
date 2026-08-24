@@ -6,6 +6,8 @@
 /gui/node_modules
 /gui/dist
 /gui/src-tauri/target
+/mcp/node_modules
+/mcp/dist
 
 # 评估文档留在本地，不进仓库
 /docs
