@@ -31,6 +31,7 @@ impl MergeStatusProvider for NoForge {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // 测试辅助函数，参数即依赖注入
 fn ctx<'a>(
     repo: &'a TempRepo,
     wt: &'a std::path::Path,

@@ -6,6 +6,7 @@
 //! 五条不变量必须**同时**成立，缺一不放行。
 
 use crate::gates::{Gate, GateCtx};
+use crate::git::porcelain::split_z;
 use crate::model::{CacheUnsafeReason, Cause, GateDetail, GateId, GateStatus};
 use std::path::{Path, PathBuf};
 
@@ -82,13 +83,6 @@ fn blocked(reason: CacheUnsafeReason) -> GateStatus {
     GateStatus::Blocked(GateDetail::NotPureCache { reason })
 }
 
-fn split_z(bytes: &[u8]) -> Vec<String> {
-    bytes
-        .split(|b| *b == 0)
-        .filter(|r| !r.is_empty())
-        .map(|r| String::from_utf8_lossy(r).into_owned())
-        .collect()
-}
 
 /// 找出该 worktree 下所有匹配规则、且实际存在的缓存目录名。
 pub fn candidates(worktree: &Path, cfg: &crate::config::ScanConfig) -> Vec<String> {

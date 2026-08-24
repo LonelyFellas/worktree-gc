@@ -102,20 +102,41 @@ pub fn parse_status_z(bytes: &[u8]) -> Vec<String> {
     out
 }
 
-/// 解析 `git ls-files -v` 输出中被打了 skip-worktree(`S`) / assume-unchanged(`h`) 标记的文件。
+/// 切分 git 的 `-z` NUL 分隔输出。
 ///
-/// 这两种标记会让本地修改在 `status --porcelain` 里**完全不可见**（D4），
-/// 是覆盖本地配置的标准手法，必须单独检出来逐个比对内容。
+/// 凡是路径可能含空格、换行、引号的地方都必须用 `-z` 而不是按行切——
+/// 文件名里带换行在真实仓库里并不罕见，按行切会算错数量甚至切断路径。
+pub fn split_z(bytes: &[u8]) -> Vec<String> {
+    bytes
+        .split(|b| *b == 0)
+        .filter(|r| !r.is_empty())
+        .map(|r| String::from_utf8_lossy(r).into_owned())
+        .collect()
+}
+
+/// 解析 `git ls-files -v`，取出会让本地修改在 `status` 里**完全隐身**的文件（D4）。
+///
+/// 标签的规则不是「一个字母对应一种标记」，而是两个正交的维度：
+/// **字母表示索引状态**（`H` 已缓存、`S` skip-worktree、`M` 未合并 …），
+/// **小写表示该条目被打了 assume-unchanged**。
+///
+/// 所以组合起来有四种形态，实测 git 2.53：
+///
+/// | 标记 | 标签 |
+/// |---|---|
+/// | 无 | `H` |
+/// | 仅 assume-unchanged | `h` |
+/// | 仅 skip-worktree | `S` |
+/// | 两者都有 | `s` |
+///
+/// 最初这里只认 `S` 和 `h`，`s` 从正中间漏过去——而它同样对 status 完全隐身。
+/// 判据因此改为：**任意小写标签，或 `S`**。
 pub fn parse_ls_files_marked(s: &str) -> Vec<String> {
     s.lines()
         .filter_map(|l| {
-            let mut ch = l.chars();
-            let tag = ch.next()?;
-            if tag == 'S' || tag == 'h' {
-                l.get(2..).map(|p| p.to_string())
-            } else {
-                None
-            }
+            let tag = l.chars().next()?;
+            let hidden = tag.is_lowercase() || tag == 'S';
+            if hidden { l.get(2..).map(|p| p.to_string()) } else { None }
         })
         .collect()
 }
@@ -153,8 +174,15 @@ mod tests {
     }
 
     #[test]
-    fn picks_only_skip_worktree_and_assume_unchanged() {
-        let s = "H normal.txt\nS skipped.txt\nh assumed.txt\nH other.txt\n";
-        assert_eq!(parse_ls_files_marked(s), vec!["skipped.txt", "assumed.txt"]);
+    fn picks_every_tag_that_hides_changes_from_status() {
+        // 实测 git 2.53 的四种形态。`s` 是两个标记同时置位时的标签，
+        // 早期只认 S/h 的写法会把它漏掉——而它改动后 status 一样是空的。
+        let s = "H normal.txt\nS skip.txt\nh assume.txt\ns both.txt\nH other.txt\n";
+        assert_eq!(parse_ls_files_marked(s), vec!["skip.txt", "assume.txt", "both.txt"]);
+    }
+
+    #[test]
+    fn plain_cached_entries_are_not_marked() {
+        assert!(parse_ls_files_marked("H a.txt\nH b.txt\n").is_empty());
     }
 }

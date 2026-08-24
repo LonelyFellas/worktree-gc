@@ -7,9 +7,18 @@
 //! 拆开不是为了整齐。原型阶段的致命缺陷正是缓存回收**完全不受门禁约束**，
 //! 会对正在构建的 worktree 抽走 target、对入库的 `dist/` 直接 rm -rf。
 
+// A 组：回收构建缓存
 pub mod busy;
 pub mod cachesafe;
 pub mod recent;
+
+// B 组：删除整个 worktree（在 A 组之上）
+pub mod dirty;
+pub mod inprogress;
+pub mod landed;
+pub mod locked;
+pub mod nested;
+pub mod precious;
 
 use crate::config::ScanConfig;
 use crate::git::GitRunner;
