@@ -6,6 +6,7 @@ import { humanBytes } from "./types";
 import { describeDetail, statusText } from "./describe";
 import { adviceFor, primaryBlocker } from "./advice";
 import { Collapsible } from "./Collapsible";
+import { Sidebar } from "./Sidebar";
 import "./App.css";
 
 type PlanSummary = {
@@ -90,7 +91,7 @@ export default function App() {
   const [result, setResult] = useState<ApplySummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showIdle, setShowIdle] = useState(false);
-  const [showRepos, setShowRepos] = useState(false);
+  const [showRepos, setShowRepos] = useState(true);
   // 路径以 ~ 缩写显示——绝对路径又长又挤，看的人只需要认出是哪个仓。
   // 从已有清单反推 home，省一个后端往返。
   const home = repos[0]?.match(/^(\/Users\/[^/]+)/)?.[1] ?? "";
@@ -161,6 +162,7 @@ export default function App() {
   const ready = items.filter((i) => i.free > 0).sort((a, b) => b.free - a.free);
 
   return (
+    <div className="shell">
     <main>
       <header>
         <h1>worktree-gc</h1>
@@ -237,28 +239,54 @@ export default function App() {
         <div className="empty">这些仓库里没有发现 worktree。</div>
       )}
 
-      {repos.length > 0 && (
-        <Collapsible
-          open={showRepos}
-          title="监控的仓库"
-          count={repos.length}
-          onToggle={() => setShowRepos(!showRepos)}
-          action={
-            <button className="add" onClick={addRepo} title="添加仓库">+</button>
-          }
-        >
-          {repos.map((r) => (
-            <div key={r} className="repo-line">
-              <span title={r}>{r.replace(home, "~")}</span>
-              <button className="tiny" onClick={() => dropRepo(r)}>移除</button>
+    </main>
+
+      <Sidebar
+        open={showRepos}
+        onToggle={() => setShowRepos(!showRepos)}
+        title="监控的仓库"
+        action={<button className="add" onClick={addRepo} title="添加仓库">+</button>}
+      >
+        {repos.length === 0 && (
+          <p className="side-note">还没有仓库。点上方 + 添加。</p>
+        )}
+        {repos.map((r) => {
+          const stat = report?.repos.find((x) => x.root === r);
+          const wts = stat?.worktrees.length ?? 0;
+          const free = stat
+            ? stat.worktrees.reduce(
+                (n, wt) =>
+                  n + (wt.is_main ? 0 : wt.caches
+                    .filter((c) => c.outcomes.every((o) => o.status === "Pass"))
+                    .reduce((m, c) => m + c.bytes, 0)),
+                0,
+              )
+            : 0;
+          return (
+            <div key={r} className="repo-card">
+              <div className="repo-top">
+                {/* 名字单独一行且永不截断——路径从中间截断恰好把仓库名切掉，
+                    而那正是用户唯一需要认出来的东西 */}
+                <span className="repo-name">{r.split("/").filter(Boolean).slice(-1)[0]}</span>
+                <button className="x" onClick={() => dropRepo(r)} title="不再监控">×</button>
+              </div>
+              {/* 只显示父目录：名字已在上一行，重复一遍既冗余又长到要截断 */}
+              <div className="repo-path" title={r}>
+                {r.replace(home, "~").split("/").slice(0, -1).join("/")}
+              </div>
+              {report && (
+                <div className="repo-stat">
+                  {wts} 个工作区
+                  {free > 0 && <span className="repo-free">· {humanBytes(free)} 可回收</span>}
+                </div>
+              )}
             </div>
-          ))}
-          <p className="repo-note">
-            清单存在 <code>~/.claude/skills/worktree-gc/repos.txt</code>，
-            每日定时体检读的是同一份。
-          </p>
-        </Collapsible>
-      )}
+          );
+        })}
+        <p className="side-foot">
+          与每日定时体检共用 <code>repos.txt</code>
+        </p>
+      </Sidebar>
 
       {pending && (
         <div className="sheet" onClick={() => setPending(null)}>
@@ -284,6 +312,6 @@ export default function App() {
           </div>
         </div>
       )}
-    </main>
+    </div>
   );
 }

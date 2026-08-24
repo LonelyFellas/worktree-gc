@@ -11,7 +11,8 @@
 * { box-sizing:border-box; }
 body { margin:0; background:var(--bg); color:var(--fg);
   font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; -webkit-font-smoothing:antialiased; }
-main { max-width:720px; margin:0 auto; padding:20px 24px 60px; }
+main { min-width:0; padding:20px 28px 60px; overflow-y:auto; }
+main > * { max-width:680px; margin-left:auto; margin-right:auto; }
 
 header { display:flex; align-items:center; justify-content:space-between; margin-bottom:24px; }
 h1 { font-size:17px; font-weight:600; margin:0; letter-spacing:-.01em; }
@@ -87,13 +88,6 @@ h2 em { font-style:normal; background:var(--faint); border-radius:10px;
 /* 仓库管理：清单为空时它是唯一该做的事，有内容时退到后面 */
 .onboard { text-align:center; padding:48px 24px; }
 .onboard p { color:var(--muted); font-size:13px; margin:0 0 16px; }
-.repo-line { display:flex; align-items:center; justify-content:space-between;
-  gap:12px; padding:8px 0; border-bottom:1px solid var(--line); font-size:12.5px; }
-.repo-line span { color:var(--muted); overflow:hidden;
-  text-overflow:ellipsis; white-space:nowrap;
-  font-family:ui-monospace,SFMono-Regular,monospace; }
-.tiny { background:transparent; color:var(--muted); padding:3px 10px; font-size:12px; }
-.tiny:hover { color:#ff3b30; }
 .repo-note { color:var(--muted); font-size:11.5px; margin:12px 0 0; line-height:1.6; }
 .repo-note code { background:var(--faint); padding:1px 5px; border-radius:3px; }
 
@@ -127,3 +121,80 @@ h2 em { font-style:normal; background:var(--faint); border-radius:10px;
 @media (prefers-reduced-motion: reduce) {
   .chev, .collapsible-body, .collapsible-body > div > * { transition:none; }
 }
+
+/* ── 主区 + 右侧工程栏 ─────────────────────────────────────
+   配置和处置是两种节奏：仓库清单几周动一次，待处理每天看一次。
+   混在同一条纵向流里，配置会一直占着版面。拆成侧栏后主区只回答「现在该做什么」。 */
+.shell { display:grid; grid-template-columns:1fr 0px; height:100vh;
+  transition:grid-template-columns .28s cubic-bezier(.4,0,.2,1); }
+.shell:has(.sidebar.open) { grid-template-columns:1fr 268px; }
+
+.sidebar { position:relative; border-left:1px solid var(--line);
+  background:var(--faint); min-width:0; }
+
+/* 收起后仅剩这个把手露在外面。做成竖条而不是小图标，
+   是因为收起状态下它是唯一的入口，太小会找不到。 */
+/* 收起时把手要整个落在视口内。left:-13px 让它骑在边界上，
+   但侧栏收起后那条边界就是屏幕右缘，把手会有一半在视口外点不到——
+   而收起状态下它是唯一的入口。 */
+.sidebar-handle { position:absolute; left:-28px; top:50%; transform:translateY(-50%);
+  width:26px; height:56px; border-radius:8px; z-index:2;
+  background:var(--bg); border:1px solid var(--line); color:var(--muted);
+  display:grid; place-items:center; padding:0; box-shadow:0 2px 8px rgba(0,0,0,.06); }
+.sidebar.open .sidebar-handle { left:-13px; }
+.sidebar-handle { transition:left .28s cubic-bezier(.4,0,.2,1); }
+.sidebar-handle:hover { color:var(--fg); border-color:var(--muted); }
+.sidebar-handle .chev { font-size:16px; width:auto;
+  transition:transform .28s cubic-bezier(.4,0,.2,1); }
+.sidebar-handle .chev.open { transform:rotate(180deg); }
+
+/* 内容宽度写死，避免侧栏在动画过程中被挤压导致文字回流抖动 */
+.sidebar-inner { width:268px; height:100%; overflow-y:auto; padding:18px 18px 40px;
+  opacity:0; transition:opacity .16s; }
+.sidebar.open .sidebar-inner { opacity:1; transition:opacity .22s .1s; }
+
+.sidebar-head { display:flex; align-items:center; justify-content:space-between;
+  gap:8px; margin-bottom:12px; }
+.sidebar-head h2 { font-size:12px; font-weight:600; color:var(--muted); margin:0; }
+.sidebar-body { display:flex; flex-direction:column; }
+
+/* 窄窗口下侧栏改为浮层，不再挤压主区——720px 以下主区再被切走 268px 就没法看了 */
+@media (max-width: 720px) {
+  .shell, .shell:has(.sidebar.open) { grid-template-columns:1fr 0px; }
+  .sidebar.open { position:fixed; right:0; top:0; bottom:0; width:268px;
+    box-shadow:-8px 0 30px rgba(0,0,0,.18); z-index:10; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell, .sidebar-inner, .sidebar-handle .chev { transition:none; }
+}
+
+/* ── 侧栏条目 ──────────────────────────────────────────────
+   名字和路径分两行：路径从中间截断恰好会把仓库名切掉，
+   而那是用户唯一需要认出来的东西。名字永不截断，路径截了也无所谓。 */
+.repo-card { padding:11px 10px; border-radius:9px; margin:0 -10px;
+  transition:background .15s; }
+.repo-card:hover { background:var(--bg); }
+.repo-top { display:flex; align-items:center; gap:8px; }
+.repo-name { font-size:13px; font-weight:500; flex:1; min-width:0;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* 只放父目录，短到不需要截断。之前试过 direction:rtl 从左侧截断，
+   但它会把前导的 `~/` 一起翻转，渲染成 `Dev/tsz-core/tsz-rust/~`。 */
+.repo-path { font-size:11px; color:var(--muted); margin-top:1px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  font-family:ui-monospace,SFMono-Regular,monospace; }
+.repo-stat { font-size:11px; color:var(--muted); margin-top:5px; }
+.repo-free { color:var(--ok); }
+
+/* 移除按钮平时不出现。每行都挂一个「移除」等于每行都在喊，
+   而移除是几周才做一次的事。 */
+.x { background:transparent; color:var(--muted); width:20px; height:20px;
+  padding:0; font-size:17px; line-height:1; border-radius:5px;
+  display:grid; place-items:center; opacity:0; transition:opacity .15s,color .15s; }
+.repo-card:hover .x { opacity:1; }
+.x:hover { color:#ff3b30; background:color-mix(in srgb,#ff3b30 10%,transparent); }
+
+.side-note { color:var(--muted); font-size:12px; margin:8px 0 0; }
+.side-foot { color:var(--muted); font-size:11px; margin:18px 0 0;
+  padding-top:12px; border-top:1px solid var(--line); }
+.side-foot code { background:var(--bg); padding:1px 5px; border-radius:3px; }
