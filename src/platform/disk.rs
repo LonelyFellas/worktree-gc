@@ -11,6 +11,10 @@ use std::path::Path;
 
 /// 该路径所在卷的可用字节数。
 pub fn available_bytes(path: &Path) -> Result<u64, Cause> {
+    std::fs::metadata(path).map_err(|e| Cause::Io {
+        path: path.to_path_buf(),
+        msg: format!("读取路径元数据失败: {e}"),
+    })?;
     fs4::available_space(path).map_err(|e| Cause::Io {
         path: path.to_path_buf(),
         msg: format!("读取可用空间失败: {e}"),
@@ -49,7 +53,8 @@ mod tests {
     #[test]
     fn missing_path_is_an_error_not_zero() {
         // 返回 0 会被上层当成「盘满了」，必须是错误
-        assert!(available_bytes(Path::new("/definitely/not/here/xyzzy")).is_err());
+        let dir = tempfile::tempdir().expect("建临时目录");
+        assert!(available_bytes(&dir.path().join("missing")).is_err());
     }
 
     #[test]

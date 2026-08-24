@@ -82,10 +82,12 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
+    #[cfg(not(windows))]
     use std::process::{Command, Stdio};
 
     /// 复刻 D11：进程的 cwd 在目录内，但命令行完全不含该路径。
     /// 原型的 pgrep -f 对这种 100% 漏检。
+    #[cfg(not(windows))]
     #[test]
     fn detects_process_by_cwd_when_argv_has_no_path() {
         let dir = tempfile::tempdir().expect("建临时目录");
@@ -111,11 +113,25 @@ mod tests {
         );
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn empty_dir_has_no_processes() {
         let dir = tempfile::tempdir().expect("建临时目录");
         let path = dir.path().canonicalize().expect("canonicalize");
         let found = SysinfoProcs.processes_under(&path).expect("应能判断");
         assert!(found.is_empty(), "空目录不该有占用进程，实际: {found:?}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reports_unsupported_when_cwd_cannot_be_read() {
+        let dir = tempfile::tempdir().expect("建临时目录");
+        assert!(matches!(
+            SysinfoProcs.processes_under(dir.path()),
+            Err(Cause::Unsupported {
+                platform: "windows",
+                ..
+            })
+        ));
     }
 }
