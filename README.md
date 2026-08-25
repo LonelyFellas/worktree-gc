@@ -21,6 +21,16 @@ Safely reclaim disk space from git worktrees left behind by AI coding agents.
 | **Codex plugin** | Asking Codex to inspect and explain worktrees | No — always read-only |
 | **CLI (`wtgc`)** | Scripts, automation, and advanced cleanup | Dry-run by default; requires `--apply` |
 
+## See the result at a glance
+
+![worktree-gc desktop app separating reclaimable caches from worktrees that need attention](.github/assets/worktree-gc-desktop.png)
+
+The desktop app keeps every decision visible:
+
+- **Safe to reclaim** lists only rebuildable caches that passed every safety gate.
+- **Needs attention** explains why a worktree was blocked and what to do next.
+- **No action needed** keeps active or protected worktrees visible without offering cleanup.
+
 ## Install the desktop app
 
 Download the installer for your platform from the
