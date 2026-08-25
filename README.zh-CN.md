@@ -2,10 +2,63 @@
 
 [English](README.md) · **简体中文**
 
-**安全地**回收 AI coding agent 留下的 git worktree 所占磁盘。
+[![CI](https://github.com/LonelyFellas/worktree-gc/actions/workflows/ci.yml/badge.svg)](https://github.com/LonelyFellas/worktree-gc/actions/workflows/ci.yml)
+[![Release](https://github.com/LonelyFellas/worktree-gc/actions/workflows/release.yml/badge.svg)](https://github.com/LonelyFellas/worktree-gc/releases/latest)
+[![最新版本](https://img.shields.io/github/v/release/LonelyFellas/worktree-gc)](https://github.com/LonelyFellas/worktree-gc/releases/latest)
+[![许可证](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#许可)
 
-> ⚠️ **状态：早期开发中。** CLI 与只读 Codex 插件已经可以扫描并解释本地
-> worktree；破坏性 CLI 操作仍然必须显式传入 `--apply`。
+安全回收 AI coding agent 留下的 git worktree 所占磁盘。
+
+> ⚠️ **状态：早期开发中。** 桌面端可以回收判定放行的构建缓存；删除整个
+> worktree 目前仅 CLI 支持，并且仍须显式传入 `--apply`。Codex 插件始终只读。
+
+## 选择使用方式
+
+| 方式 | 适合场景 | 是否会修改文件 |
+|---|---|---|
+| **桌面端** | 交互式扫描与回收构建缓存 | 确认后仅删除构建缓存 |
+| **Codex 插件** | 让 Codex 检查并解释 worktree | 不会，始终只读 |
+| **CLI（`wtgc`）** | 脚本、自动化与高级清理 | 默认演练，必须显式传入 `--apply` |
+
+## 安装桌面端
+
+从 [最新 GitHub Release](https://github.com/LonelyFellas/worktree-gc/releases/latest)
+下载对应平台的安装包：
+
+| 平台 | 安装包 |
+|---|---|
+| macOS · Apple Silicon | `worktree-gc_<version>_aarch64.dmg` |
+| macOS · Intel | `worktree-gc_<version>_x64.dmg` |
+| Windows · x64 | `worktree-gc_<version>_x64-setup.exe`（推荐）或 `.msi` |
+| Linux · x64 | `worktree-gc_<version>_amd64.AppImage`（推荐）或 `.deb` |
+
+打开应用，添加需要监控的仓库，然后开始扫描。回收操作必须经过确认，并且只会删除
+通过全部安全门禁的构建缓存；源码与未提交改动不会受到影响。
+
+应用会在启动时检查 Tauri 签名更新，也可以从 **设置 → 应用更新** 手动检查。更新源支持
+macOS 应用、Windows 安装程序和 Linux AppImage；通过 MSI 或 DEB 安装时，请从 Release
+页面手动升级。应用内自动更新从 `v0.1.8` 开始提供，因此更早的版本需要先手动升级一次。
+
+Release 安装包目前尚未经过 Apple 公证或 Microsoft 代码签名，操作系统可能显示警告。
+请只从本仓库下载，必要时使用 `SHA256SUMS` 校验。自动更新包使用独立签名，安装前会由
+应用验证。
+
+### macOS 提示“应用已损坏”
+
+如果 DMG 来自本仓库的官方 Release 页面，并且校验和一致，这个提示通常是 Gatekeeper
+隔离属性导致的，并不代表应用文件真的损坏。先把 `worktree-gc.app` 移到“应用程序”目录，
+退出正在运行的应用，然后打开终端执行：
+
+```bash
+sudo xattr -r -d com.apple.quarantine "/Applications/worktree-gc.app"
+open "/Applications/worktree-gc.app"
+```
+
+`sudo` 提示时输入当前 macOS 登录密码；输入过程中终端不会显示字符。该命令只移除这个
+应用的隔离属性，不会全局关闭 Gatekeeper。如果应用安装在其他位置，请把命令中的路径
+替换为实际路径。
+
+macOS 还可以开启每日自动体检，但它只扫描和通知，绝不会自动清理。
 
 ## 安装 Codex 插件
 
@@ -44,6 +97,39 @@ codex plugin add worktree-gc@worktree-gc
 
 重启 Codex 桌面端并新建任务，然后让它扫描本地 worktree。MCP 集成只读，
 并且始终使用离线模式。
+
+## 安装 CLI
+
+### 预编译二进制（推荐）
+
+从 [GitHub Releases](https://github.com/LonelyFellas/worktree-gc/releases) 下载
+`worktree-gc-<platform>.tar.gz`，解压后把 `wtgc` 放进 `PATH`。
+
+### 从源码安装
+
+需要 Rust 1.95 或更高版本：
+
+```bash
+cargo install --git https://github.com/LonelyFellas/worktree-gc --locked --bin wtgc wtgc
+```
+
+### 基本用法
+
+```bash
+# 扫描并解释；这也是默认行为。
+wtgc --repo /仓库路径 scan
+
+# 先演练缓存回收，再显式执行。
+wtgc --repo /仓库路径 reclaim
+wtgc --repo /仓库路径 reclaim --apply
+
+# 删除整个 worktree 同样默认只演练，加入 --apply 才执行。
+wtgc --repo /仓库路径 remove
+```
+
+不传 `--repo` 时，`wtgc` 会扫描已知的 AI agent worktree 落点。传入一个或多个
+`--repo` 可以严格限制扫描范围；脚本可使用 `--json`，`--offline` 可以禁止查询 forge。
+`--seed` 用于添加自定义种子目录，与 `--no-default-seeds` 一起使用可以排除内置落点。
 
 ## 要解决的问题
 
