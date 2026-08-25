@@ -9,6 +9,7 @@
 pub mod apply;
 pub mod config;
 pub mod discover;
+pub(crate) mod facts;
 pub mod forge;
 pub mod fsops;
 pub mod gates;

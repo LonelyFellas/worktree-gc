@@ -75,6 +75,11 @@ export type ScanReport = {
   tools: { name: string; path: string | null; version: string | null }[];
 };
 
+export type ScanEnvelope = {
+  scan_id: string;
+  report: ScanReport;
+};
+
 /// 与 Rust 侧 platform::disk::human_bytes 同口径（1024 进制、一位小数），
 /// 这样界面上的数字和终端里 du -h 的输出能相互印证。
 export function humanBytes(n: number): string {

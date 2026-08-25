@@ -110,7 +110,7 @@ fn walk_size(path: &Path, parallelism: Parallelism) -> Result<u64, Cause> {
 
 /// 一个条目的实际占用字节数，以及（仅当它可能被重复遇到时）它的物理身份。
 #[cfg(unix)]
-fn probe(meta: &std::fs::Metadata) -> (u64, Option<(u64, u64)>) {
+pub(crate) fn probe(meta: &std::fs::Metadata) -> (u64, Option<(u64, u64)>) {
     use std::os::unix::fs::MetadataExt;
 
     let bytes = meta.blocks().saturating_mul(512);
@@ -126,6 +126,6 @@ fn probe(meta: &std::fs::Metadata) -> (u64, Option<(u64, u64)>) {
 
 /// 非 unix 平台拿不到块数与 inode：退回逻辑长度，且无法去重。
 #[cfg(not(unix))]
-fn probe(meta: &std::fs::Metadata) -> (u64, Option<(u64, u64)>) {
+pub(crate) fn probe(meta: &std::fs::Metadata) -> (u64, Option<(u64, u64)>) {
     (meta.len(), None)
 }

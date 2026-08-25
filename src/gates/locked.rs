@@ -49,13 +49,7 @@ impl Gate for LockedGate {
             .find(|e| e.path.canonicalize().is_ok_and(|p| p == want));
 
         match entry {
-            Some(e) => match e.locked {
-                // `git worktree lock` 不带 --reason 时 porcelain 只有裸的 `locked`，
-                // 解析出来是空串。照样拦，只是没有理由可展示。
-                Some(r) if r.is_empty() => blocked(None),
-                Some(r) => blocked(Some(unquote_c_style(&r))),
-                None => GateStatus::Pass,
-            },
+            Some(e) => status_from_entry(&e),
             // 这个 worktree 不在注册表里 —— 我们和 git 对现状的认知已经不一致，
             // 此时任何猜测都没有依据（它可能刚被 move 走、也可能压根不是 worktree）。
             None => GateStatus::Unknown(Cause::Io {
@@ -63,6 +57,24 @@ impl Gate for LockedGate {
                 msg: "git worktree list --porcelain 中没有这条注册记录".into(),
             }),
         }
+    }
+}
+
+impl LockedGate {
+    /// 扫描阶段复用 discover 已取得的 porcelain 条目；apply 仍走 [`Gate::evaluate`]
+    /// 重新读取注册表，不能拿扫描时快照代替执行前复检。
+    pub(crate) fn evaluate_entry(&self, entry: &porcelain::WorktreeEntry) -> GateStatus {
+        status_from_entry(entry)
+    }
+}
+
+fn status_from_entry(entry: &porcelain::WorktreeEntry) -> GateStatus {
+    match &entry.locked {
+        // `git worktree lock` 不带 --reason 时 porcelain 只有裸的 `locked`，
+        // 解析出来是空串。照样拦，只是没有理由可展示。
+        Some(reason) if reason.is_empty() => blocked(None),
+        Some(reason) => blocked(Some(unquote_c_style(reason))),
+        None => GateStatus::Pass,
     }
 }
 

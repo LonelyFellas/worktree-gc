@@ -23,7 +23,7 @@ pub mod precious;
 use crate::config::ScanConfig;
 use crate::git::GitRunner;
 use crate::model::{Baseline, GateId, GateStatus};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 /// 进程表。抽象出来既为跨平台，也为在测试里造 busy 状态。
@@ -34,6 +34,17 @@ pub trait ProcessTable: Send + Sync {
     /// 这类「cwd 在目录内但 argv 不含路径」的进程 100% 假阴性（D11）。
     /// 平台拿不到 cwd 时返回 `Err`，由调用方落成 `Unknown`——绝不返回空集当作「没占用」。
     fn processes_under(&self, dir: &Path) -> Result<Vec<ProcInfo>, crate::model::Cause>;
+
+    /// 批量查询多个 worktree。默认逐个调用，测试替身不必为批量接口重复实现；
+    /// 真实平台实现应覆写成「刷新一次进程表，再对全部路径求前缀命中」。
+    ///
+    /// 返回顺序必须与 `dirs` 一致，扫描层依靠下标把结果对回 worktree。
+    fn processes_under_many(
+        &self,
+        dirs: &[PathBuf],
+    ) -> Vec<Result<Vec<ProcInfo>, crate::model::Cause>> {
+        dirs.iter().map(|dir| self.processes_under(dir)).collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
