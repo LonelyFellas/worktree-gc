@@ -20,6 +20,16 @@
 | **Codex 插件** | 让 Codex 检查并解释 worktree | 不会，始终只读 |
 | **CLI（`wtgc`）** | 脚本、自动化与高级清理 | 默认演练，必须显式传入 `--apply` |
 
+## 一眼看懂扫描结果
+
+![worktree-gc 桌面端将可回收缓存与需要关注的 worktree 分开展示](.github/assets/worktree-gc-desktop.png)
+
+桌面端会把每项判断直接呈现出来：
+
+- **可安全回收**：只列出通过全部安全门禁、可以重新构建的缓存。
+- **需要关注**：解释 worktree 被拦下的原因，并给出下一步建议。
+- **无需操作**：保留正在使用或受保护的 worktree，但不会提供清理操作。
+
 ## 安装桌面端
 
 从 [最新 GitHub Release](https://github.com/LonelyFellas/worktree-gc/releases/latest)
