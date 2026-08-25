@@ -165,10 +165,23 @@ jobs:
           pattern: release-*
           path: artifacts
           merge-multiple: true
+      - name: Flatten release assets
+        shell: bash
+        run: |
+          mkdir release-assets
+          while IFS= read -r -d '' file; do
+            name=${file##*/}
+            if [[ -e "release-assets/$name" ]]; then
+              echo "::error::Duplicate release asset name: $name"
+              exit 1
+            fi
+            cp "$file" "release-assets/$name"
+          done < <(find artifacts -type f -print0)
+          compgen -G 'release-assets/*' > /dev/null
       - name: Create checksums
-        working-directory: artifacts
+        working-directory: release-assets
         run: find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
       - name: Publish release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" artifacts/* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" release-assets/* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes

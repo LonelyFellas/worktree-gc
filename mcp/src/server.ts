@@ -7,7 +7,7 @@ const port = parsePort(process.env.MCP_PORT);
 const app = createMcpExpressApp({ host });
 
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", server: "worktree-gc", version: "0.1.4" });
+  res.json({ status: "ok", server: "worktree-gc", version: "0.1.5" });
 });
 
 app.post("/mcp", async (req, res) => {

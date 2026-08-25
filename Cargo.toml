@@ -1,6 +1,6 @@
 [package]
 name = "wtgc"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 rust-version = "1.95"
 description = "Reclaim disk space from git worktrees left behind by AI coding agents — safely."
