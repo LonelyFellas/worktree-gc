@@ -35,6 +35,20 @@ impl Gate for RecentGate {
     }
 }
 
+impl RecentGate {
+    /// 扫描阶段使用已采集的浅层 mtime；apply 仍通过 [`Gate::evaluate`] 实时读取。
+    pub(crate) fn evaluate_activity(
+        &self,
+        ctx: &GateCtx<'_>,
+        activity: Result<Option<(PathBuf, SystemTime)>, Cause>,
+    ) -> GateStatus {
+        match activity {
+            Ok(newest) => evaluate_newest(newest, ctx.cfg.cache_quiet, ctx.clock.now()),
+            Err(cause) => GateStatus::Unknown(cause),
+        }
+    }
+}
+
 impl Gate for IdleGate {
     fn id(&self) -> GateId {
         GateId::Idle
@@ -69,6 +83,29 @@ impl Gate for IdleGate {
             };
             filesystem = newer(filesystem, cache_newest);
         }
+        let head = match head_commit_mtime(ctx) {
+            Ok(value) => value,
+            Err(cause) => return GateStatus::Unknown(cause),
+        };
+        evaluate_newest(newer(filesystem, Some(head)), ctx.cfg.idle, ctx.clock.now())
+    }
+}
+
+impl IdleGate {
+    /// 扫描阶段复用整棵 worktree 的事实快照，只保留 HEAD 提交时间这次 Git 查询。
+    /// apply 继续走 [`Gate::evaluate`]，因此扫描后的新写入不会绕过 TOCTOU 复检。
+    pub(crate) fn evaluate_activity(
+        &self,
+        ctx: &GateCtx<'_>,
+        activity: Result<Option<(PathBuf, SystemTime)>, Cause>,
+    ) -> GateStatus {
+        if ctx.cfg.idle.is_zero() {
+            return GateStatus::Pass;
+        }
+        let filesystem = match activity {
+            Ok(value) => value,
+            Err(cause) => return GateStatus::Unknown(cause),
+        };
         let head = match head_commit_mtime(ctx) {
             Ok(value) => value,
             Err(cause) => return GateStatus::Unknown(cause),

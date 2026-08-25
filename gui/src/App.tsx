@@ -10,7 +10,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { ScanReport } from "./types";
+import type { ScanEnvelope, ScanReport } from "./types";
 import { humanBytes } from "./types";
 import { describeDetail, statusText } from "./describe";
 import { adviceFor, primaryBlocker } from "./advice";
@@ -211,6 +211,7 @@ function Row({ item, language }: { item: Item; language: Language }) {
 export default function App() {
   const [repos, setRepos] = useState<string[]>([]);
   const [report, setReport] = useState<ScanReport | null>(null);
+  const [scanId, setScanId] = useState<string | null>(null);
   const [busy, setBusy] = useState<BusyState | null>(null);
   const [pending, setPending] = useState<PlanSummary | null>(null);
   const [result, setResult] = useState<ApplySummary | null>(null);
@@ -390,10 +391,13 @@ export default function App() {
     setBusy("scanning");
     setError(null);
     setResult(null);
+    setScanId(null);
     try {
       const r = await invoke<string[]>("default_repos");
       setRepos(r);
-      setReport(await invoke<ScanReport>("scan_repos", { repos: r, offline: false }));
+      const scan = await invoke<ScanEnvelope>("scan_repos", { repos: r, offline: false });
+      setReport(scan.report);
+      setScanId(scan.scan_id);
     } catch (e) { setError(`${ui.operationFailed}: ${commandErrorText(e, language)}`); }
     finally {
       setHasScanned(true);
@@ -445,11 +449,12 @@ export default function App() {
   }
 
   async function proposeReclaim() {
+    if (!scanId) return;
     setBusy("planning");
     setError(null);
     try {
       setPending(await invoke<PlanSummary>("create_plan", {
-        repos, kind: "reclaim", includeMain: false,
+        scanId, kind: "reclaim", includeMain: false,
       }));
     } catch (e) { setError(`${ui.operationFailed}: ${commandErrorText(e, language)}`); }
     finally { setBusy(null); }
@@ -658,7 +663,7 @@ export default function App() {
             {ui.safeNow}
             <span className="hero-sub">{ui.diskAvailable(humanBytes(report.available_bytes))}</span>
           </div>
-          <button className="primary" onClick={proposeReclaim} disabled={!!busy}>
+          <button className="primary" onClick={proposeReclaim} disabled={!!busy || !scanId}>
             {ui.reclaim}
           </button>
         </section>

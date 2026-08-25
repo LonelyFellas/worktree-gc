@@ -46,23 +46,67 @@ impl Gate for NestedGate {
             }
         };
 
-        let mut found = match registered_under(ctx, &root) {
+        let entries = match registered_entries(ctx) {
+            Ok(entries) => entries,
+            Err(c) => return GateStatus::Unknown(c),
+        };
+        let filesystem = scan_for_git(
+            &root,
+            &ctx.cfg.cache_rules,
+            &ctx.cfg.precious.disposable_dirs,
+        )
+        .map_err(|(path, error)| Cause::Io {
+            path,
+            msg: error.to_string(),
+        });
+        self.evaluate_entries_and_root(&entries, root, filesystem)
+    }
+}
+
+impl NestedGate {
+    /// 扫描阶段同时复用 discover 的注册表和文件树 facts。路径在这里映射到
+    /// canonical worktree 根，保持与实时 NestedGate 的报告口径一致。
+    pub(crate) fn evaluate_entries_with_filesystem(
+        &self,
+        ctx: &GateCtx<'_>,
+        entries: &[porcelain::WorktreeEntry],
+        filesystem: Result<Vec<PathBuf>, Cause>,
+    ) -> GateStatus {
+        let root = match ctx.worktree.canonicalize() {
+            Ok(path) => path,
+            Err(e) => {
+                return GateStatus::Unknown(Cause::Io {
+                    path: ctx.worktree.to_path_buf(),
+                    msg: e.to_string(),
+                });
+            }
+        };
+        let filesystem = filesystem.map(|paths| {
+            paths
+                .into_iter()
+                .map(|path| {
+                    path.strip_prefix(ctx.worktree)
+                        .map_or(path.clone(), |relative| root.join(relative))
+                })
+                .collect()
+        });
+        self.evaluate_entries_and_root(entries, root, filesystem)
+    }
+
+    fn evaluate_entries_and_root(
+        &self,
+        entries: &[porcelain::WorktreeEntry],
+        root: PathBuf,
+        filesystem: Result<Vec<PathBuf>, Cause>,
+    ) -> GateStatus {
+        let mut found = match registered_under_entries(entries, &root) {
             Ok(v) => v,
             Err(c) => return GateStatus::Unknown(c),
         };
 
-        match scan_for_git(
-            &root,
-            &ctx.cfg.cache_rules,
-            &ctx.cfg.precious.disposable_dirs,
-        ) {
+        match filesystem {
             Ok(v) => found.extend(v),
-            Err((path, e)) => {
-                return GateStatus::Unknown(Cause::Io {
-                    path,
-                    msg: e.to_string(),
-                });
-            }
+            Err(cause) => return GateStatus::Unknown(cause),
         }
 
         // 两条判据会重复命中同一个内层工作区（注册过的必然也有 .git）
@@ -78,13 +122,19 @@ impl Gate for NestedGate {
 }
 
 /// 判据一：`git worktree list --porcelain` 里位于本 worktree 之下的**其它** worktree。
-fn registered_under(ctx: &GateCtx<'_>, root: &Path) -> Result<Vec<PathBuf>, Cause> {
+fn registered_entries(ctx: &GateCtx<'_>) -> Result<Vec<porcelain::WorktreeEntry>, Cause> {
     let out = ctx
         .git
         .run_ok(ctx.repo, &["worktree", "list", "--porcelain"])?;
+    Ok(porcelain::parse_worktree_list(&out.stdout_utf8()))
+}
 
+fn registered_under_entries(
+    entries: &[porcelain::WorktreeEntry],
+    root: &Path,
+) -> Result<Vec<PathBuf>, Cause> {
     let mut hits = Vec::new();
-    for entry in porcelain::parse_worktree_list(&out.stdout_utf8()) {
+    for entry in entries {
         let resolved = match entry.path.canonicalize() {
             Ok(p) => p,
             // 目录已经不在了（陈旧注册记录，见 D13）：磁盘上没有可丢的东西，
@@ -92,7 +142,7 @@ fn registered_under(ctx: &GateCtx<'_>, root: &Path) -> Result<Vec<PathBuf>, Caus
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => {
                 return Err(Cause::Io {
-                    path: entry.path,
+                    path: entry.path.clone(),
                     msg: e.to_string(),
                 });
             }

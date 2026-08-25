@@ -10,6 +10,7 @@
 
 use crate::config::ScanConfig;
 use crate::discover::{self, Discovered};
+use crate::facts::{self, WorktreeFacts};
 use crate::gates::{
     Clock, Gate, GateCtx, MergeStatusProvider, ProcessTable, busy, cachesafe, dirty, inprogress,
     landed, locked, nested, precious, recent,
@@ -17,8 +18,11 @@ use crate::gates::{
 use crate::git::{GitRunner, base, exe, porcelain::WorktreeEntry};
 use crate::model::*;
 use crate::platform::disk;
-use crate::sizing;
+use rayon::prelude::*;
+use std::collections::HashMap;
 use std::path::Path;
+
+const MAX_SCAN_THREADS: usize = 4;
 
 /// 全部副作用依赖集中注入。这是可测性的支点，也是否定性测试的入口——
 /// 注入一个「总是失败」的 GitRunner，就能断言没有任何 worktree 被判为可清理。
@@ -34,10 +38,30 @@ pub struct Env {
 /// 单个仓库出问题不会让整次扫描失败——它会以 `baseline_error` 或某道门禁的 `Unknown`
 /// 出现在报告里。**静默跳过是不允许的**：用户会把"没扫到"误读成"没东西可清"。
 pub fn scan(cfg: &ScanConfig, env: &Env) -> ScanReport {
-    let repos = discover::discover(cfg, env.git.as_ref())
-        .into_iter()
-        .map(|d| scan_repo(&d, cfg, env))
+    let discovered = discover::discover(cfg, env.git.as_ref());
+    let process_paths: Vec<_> = discovered
+        .iter()
+        .flat_map(|repo| repo.worktrees.iter().map(|entry| entry.path.clone()))
         .collect();
+    let process_snapshot = ScanProcessTable::capture(env.procs.as_ref(), &process_paths);
+    let scan_all = || {
+        discovered
+            .par_iter()
+            .map(|d| scan_repo(d, cfg, env, &process_snapshot))
+            .collect()
+    };
+    let repos = match rayon::ThreadPoolBuilder::new()
+        .num_threads(MAX_SCAN_THREADS)
+        .thread_name(|index| format!("wtgc-scan-{index}"))
+        .build()
+    {
+        Ok(pool) => pool.install(scan_all),
+        // 线程池初始化失败时退回顺序扫描，不能让性能设施改变安全判定的可用性。
+        Err(_) => discovered
+            .iter()
+            .map(|d| scan_repo(d, cfg, env, &process_snapshot))
+            .collect(),
+    };
 
     // 可用空间在扫描时刻取一次，apply 之后再取一次，用差值报**实测**回收量。
     // du 的口径在 APFS 上会因写时复制系统性高估，不能拿它当交付数字。
@@ -56,7 +80,47 @@ pub fn scan(cfg: &ScanConfig, env: &Env) -> ScanReport {
     }
 }
 
-fn scan_repo(d: &Discovered, cfg: &ScanConfig, env: &Env) -> RepoReport {
+/// 一轮扫描只刷新一次系统进程表。门禁仍通过 ProcessTable 查询，apply 可继续使用
+/// 实时平台实现；扫描阶段则从这份不可变快照读取，保证同轮结果自洽。
+struct ScanProcessTable {
+    by_path: HashMap<std::path::PathBuf, Result<Vec<crate::gates::ProcInfo>, Cause>>,
+}
+
+impl ScanProcessTable {
+    fn capture(source: &dyn ProcessTable, paths: &[std::path::PathBuf]) -> Self {
+        let results = source.processes_under_many(paths);
+        let mut by_path = HashMap::with_capacity(paths.len());
+        for (index, path) in paths.iter().enumerate() {
+            let result = results.get(index).cloned().unwrap_or_else(|| {
+                Err(Cause::CommandFailed {
+                    cmd: "snapshot process table".into(),
+                    code: None,
+                    stderr: format!(
+                        "批量进程查询返回 {} 项，但需要 {} 项",
+                        results.len(),
+                        paths.len()
+                    ),
+                })
+            });
+            by_path.insert(path.clone(), result);
+        }
+        Self { by_path }
+    }
+}
+
+impl ProcessTable for ScanProcessTable {
+    fn processes_under(&self, dir: &Path) -> Result<Vec<crate::gates::ProcInfo>, Cause> {
+        self.by_path.get(dir).cloned().unwrap_or_else(|| {
+            Err(Cause::CommandFailed {
+                cmd: "query process snapshot".into(),
+                code: None,
+                stderr: format!("进程快照里没有 {}", dir.display()),
+            })
+        })
+    }
+}
+
+fn scan_repo(d: &Discovered, cfg: &ScanConfig, env: &Env, procs: &dyn ProcessTable) -> RepoReport {
     let (baseline, baseline_error) = match base::detect(env.git.as_ref(), &d.root, &cfg.baseline) {
         Ok(b) => (Some(b), None),
         Err(c) => (None, Some(c)),
@@ -64,8 +128,8 @@ fn scan_repo(d: &Discovered, cfg: &ScanConfig, env: &Env) -> RepoReport {
 
     let mut worktrees: Vec<WorktreeReport> = d
         .worktrees
-        .iter()
-        .map(|w| scan_worktree(&d.root, w, baseline.as_ref(), cfg, env))
+        .par_iter()
+        .map(|w| scan_worktree(&d.root, w, &d.worktrees, baseline.as_ref(), cfg, env, procs))
         .collect();
     subtract_nested_sizes(&mut worktrees);
 
@@ -81,9 +145,11 @@ fn scan_repo(d: &Discovered, cfg: &ScanConfig, env: &Env) -> RepoReport {
 fn scan_worktree(
     repo: &Path,
     entry: &WorktreeEntry,
+    entries: &[WorktreeEntry],
     baseline: Option<&Baseline>,
     cfg: &ScanConfig,
     env: &Env,
+    procs: &dyn ProcessTable,
 ) -> WorktreeReport {
     let head_oid = entry.head.clone().unwrap_or_default();
     let is_main = entry.path == repo;
@@ -96,7 +162,7 @@ fn scan_worktree(
         baseline,
         cfg,
         git: env.git.as_ref(),
-        procs: env.procs.as_ref(),
+        procs,
         clock: env.clock.as_ref(),
         forge: env.forge.as_ref(),
     };
@@ -108,8 +174,10 @@ fn scan_worktree(
         status: busy::BusyGate.evaluate(&ctx),
     };
 
-    let caches = scan_caches(&ctx, &busy);
-    let bytes = sizing::dir_size(&entry.path).unwrap_or(0);
+    let cache_dirs = cachesafe::candidates(ctx.worktree, ctx.cfg);
+    let facts = facts::collect(ctx.worktree, &cache_dirs, ctx.cfg);
+    let caches = scan_caches(&ctx, &busy, &cache_dirs, &facts);
+    let bytes = facts.bytes;
 
     // 主工作区永不触碰。它不是"恰好过不了门禁"，是根本不进入判定。
     if is_main {
@@ -136,7 +204,7 @@ fn scan_worktree(
     let b_gates: Vec<GateOutcome> = vec![
         GateOutcome {
             id: GateId::Idle,
-            status: recent::IdleGate.evaluate(&ctx),
+            status: recent::IdleGate.evaluate_activity(&ctx, facts.activity.clone()),
         },
         GateOutcome {
             id: GateId::Dirty,
@@ -152,7 +220,11 @@ fn scan_worktree(
         },
         GateOutcome {
             id: GateId::Nested,
-            status: nested::NestedGate.evaluate(&ctx),
+            status: nested::NestedGate.evaluate_entries_with_filesystem(
+                &ctx,
+                entries,
+                facts.nested_git.clone(),
+            ),
         },
         GateOutcome {
             id: GateId::InProgress,
@@ -160,7 +232,7 @@ fn scan_worktree(
         },
         GateOutcome {
             id: GateId::Locked,
-            status: locked::LockedGate.evaluate(&ctx),
+            status: locked::LockedGate.evaluate_entry(entry),
         },
     ];
 
@@ -183,15 +255,33 @@ fn scan_worktree(
     }
 }
 
-fn scan_caches(ctx: &GateCtx<'_>, busy: &GateOutcome) -> Vec<CacheDir> {
-    cachesafe::candidates(ctx.worktree, ctx.cfg)
-        .into_iter()
+fn scan_caches(
+    ctx: &GateCtx<'_>,
+    busy: &GateOutcome,
+    cache_dirs: &[String],
+    facts: &WorktreeFacts,
+) -> Vec<CacheDir> {
+    cache_dirs
+        .iter()
+        .cloned()
         .map(|dir| {
+            let cache_facts = facts.cache(&dir);
             let outcomes = vec![
                 busy.clone(),
                 GateOutcome {
                     id: GateId::Recent,
-                    status: recent::RecentGate { dir: dir.clone() }.evaluate(ctx),
+                    status: cache_facts.map_or_else(
+                        || {
+                            GateStatus::Unknown(Cause::Io {
+                                path: ctx.worktree.join(&dir),
+                                msg: "文件树事实里缺少缓存目录".into(),
+                            })
+                        },
+                        |facts| {
+                            recent::RecentGate { dir: dir.clone() }
+                                .evaluate_activity(ctx, facts.activity.clone())
+                        },
+                    ),
                 },
                 GateOutcome {
                     id: GateId::CacheSafe,
@@ -199,7 +289,7 @@ fn scan_caches(ctx: &GateCtx<'_>, busy: &GateOutcome) -> Vec<CacheDir> {
                 },
             ];
             let path = ctx.worktree.join(&dir);
-            let bytes = sizing::dir_size(&path).unwrap_or(0);
+            let bytes = cache_facts.map_or(0, |facts| facts.bytes);
             let ecosystem = ctx
                 .cfg
                 .cache_rules

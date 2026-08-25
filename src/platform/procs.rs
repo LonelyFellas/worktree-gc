@@ -8,19 +8,33 @@
 
 use crate::gates::{ProcInfo, ProcessTable};
 use crate::model::Cause;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 pub struct SysinfoProcs;
 
 impl ProcessTable for SysinfoProcs {
     fn processes_under(&self, dir: &Path) -> Result<Vec<ProcInfo>, Cause> {
+        self.processes_under_many(&[dir.to_path_buf()])
+            .into_iter()
+            .next()
+            .unwrap_or(Err(Cause::Unsupported {
+                what: "进程快照没有返回查询结果",
+                platform: std::env::consts::OS,
+            }))
+    }
+
+    fn processes_under_many(&self, dirs: &[PathBuf]) -> Vec<Result<Vec<ProcInfo>, Cause>> {
+        if dirs.is_empty() {
+            return Vec::new();
+        }
         // Windows 上拿不到进程 cwd，这道门无法成立 —— 明说不知道，而不是返回空集。
         if cfg!(windows) {
-            return Err(Cause::Unsupported {
+            let cause = Cause::Unsupported {
                 what: "进程工作目录（判断 worktree 是否正被占用）",
                 platform: "windows",
-            });
+            };
+            return vec![Err(cause); dirs.len()];
         }
 
         let mut sys = System::new();
@@ -34,7 +48,7 @@ impl ProcessTable for SysinfoProcs {
         );
 
         let me = std::process::id();
-        let mut hits = Vec::new();
+        let mut hits = vec![Vec::new(); dirs.len()];
         let mut cwd_readable = 0usize;
 
         for (pid, proc_) in sys.processes() {
@@ -43,37 +57,46 @@ impl ProcessTable for SysinfoProcs {
                 continue; // 别把自己算成占用
             }
 
-            // 判据一：工作目录落在 dir 之下（抓 cargo build / pnpm dev 这类）
-            let by_cwd = match proc_.cwd() {
+            let cwd = match proc_.cwd() {
                 Some(cwd) => {
                     cwd_readable += 1;
-                    cwd.starts_with(dir)
+                    Some(cwd)
                 }
-                None => false,
+                None => None,
             };
 
-            // 判据二：可执行文件或命令行里出现该路径（抓 `git -C <path>` 这类）
-            let by_cmd = proc_.exe().is_some_and(|e| e.starts_with(dir))
-                || proc_.cmd().iter().any(|a| Path::new(a).starts_with(dir));
+            for (index, dir) in dirs.iter().enumerate() {
+                // 判据一：工作目录落在 dir 之下（抓 cargo build / pnpm dev 这类）
+                let by_cwd = cwd.is_some_and(|cwd| cwd.starts_with(dir));
+                // 判据二：可执行文件或命令行里出现该路径（抓 `git -C <path>` 这类）
+                let by_cmd = proc_.exe().is_some_and(|e| e.starts_with(dir))
+                    || proc_.cmd().iter().any(|a| Path::new(a).starts_with(dir));
 
-            if by_cwd || by_cmd {
-                hits.push(ProcInfo {
-                    pid: pid_u32,
-                    name: proc_.name().to_string_lossy().into_owned(),
-                });
+                if by_cwd || by_cmd {
+                    hits[index].push(ProcInfo {
+                        pid: pid_u32,
+                        name: proc_.name().to_string_lossy().into_owned(),
+                    });
+                }
             }
         }
 
         // 一个 cwd 都读不到，说明这台机器上这条判据根本不成立（权限、沙箱、平台限制）。
         // 此时「没找到占用进程」不是证据，必须报不知道。
         if cwd_readable == 0 {
-            return Err(Cause::Unsupported {
+            let cause = Cause::Unsupported {
                 what: "进程工作目录（全部进程的 cwd 均不可读）",
                 platform: std::env::consts::OS,
-            });
+            };
+            return vec![Err(cause); dirs.len()];
         }
 
-        Ok(hits)
+        // sysinfo 的进程表迭代顺序不稳定；固定 PID 顺序，避免同一快照只因哈希顺序
+        // 变化就得到不同的报告、sample 或 fingerprint。
+        for dir_hits in &mut hits {
+            dir_hits.sort_by_key(|process| process.pid);
+        }
+        hits.into_iter().map(Ok).collect()
     }
 }
 
@@ -120,6 +143,50 @@ mod tests {
         let path = dir.path().canonicalize().expect("canonicalize");
         let found = SysinfoProcs.processes_under(&path).expect("应能判断");
         assert!(found.is_empty(), "空目录不该有占用进程，实际: {found:?}");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn one_snapshot_maps_a_nested_process_to_inner_and_outer_worktrees() {
+        let root = tempfile::tempdir().expect("建临时目录");
+        let outer = root.path().canonicalize().expect("canonicalize");
+        let inner = outer.join("nested");
+        let other = outer.join("other");
+        std::fs::create_dir_all(&inner).expect("建内层目录");
+        std::fs::create_dir_all(&other).expect("建无关目录");
+
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .current_dir(&inner)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("起 sleep");
+
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let found =
+            SysinfoProcs.processes_under_many(&[outer.clone(), inner.clone(), other.clone()]);
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert_eq!(found.len(), 3);
+        assert!(
+            found[0]
+                .as_ref()
+                .expect("外层可判断")
+                .iter()
+                .any(|p| p.name.contains("sleep")),
+            "内层进程必须同时占用外层"
+        );
+        assert!(
+            found[1]
+                .as_ref()
+                .expect("内层可判断")
+                .iter()
+                .any(|p| p.name.contains("sleep")),
+            "内层进程必须占用内层"
+        );
+        assert!(found[2].as_ref().expect("无关目录可判断").is_empty());
     }
 
     #[cfg(windows)]
