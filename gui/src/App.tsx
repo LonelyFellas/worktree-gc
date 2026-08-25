@@ -8,8 +8,11 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check, type Update } from "@tauri-apps/plugin-updater";
 import type { ScanEnvelope, ScanReport } from "./types";
 import { humanBytes } from "./types";
 import { describeDetail, statusText } from "./describe";
@@ -47,6 +50,14 @@ type RepoDragPreview = {
   offsetY: number;
   width: number;
 };
+type UpdateState =
+  | { kind: "idle" }
+  | { kind: "checking" }
+  | { kind: "current" }
+  | { kind: "available"; version: string }
+  | { kind: "downloading"; progress: number | null }
+  | { kind: "installing" }
+  | { kind: "error"; message: string };
 
 const SIDEBAR_POSITION_KEY = "worktree-gc.sidebar-position";
 const LAYOUT_DENSITY_KEY = "worktree-gc.layout-density";
@@ -232,6 +243,10 @@ export default function App() {
   const [repoDropTarget, setRepoDropTarget] = useState<RepoDropTarget | null>(null);
   const [repoOrderBusy, setRepoOrderBusy] = useState(false);
   const [repoDragPreview, setRepoDragPreview] = useState<RepoDragPreview | null>(null);
+  const [appVersion, setAppVersion] = useState("…");
+  const [updateState, setUpdateState] = useState<UpdateState>({ kind: "idle" });
+  const updateResource = useRef<Update | null>(null);
+  const startupUpdateCheck = useRef(false);
   const ui = messages[language];
   // 路径以 ~ 缩写显示——绝对路径又长又挤，看的人只需要认出是哪个仓。
   // 从已有清单反推 home，省一个后端往返。
@@ -240,6 +255,15 @@ export default function App() {
   useEffect(() => {
     void refresh();
     void refreshDailyCheck();
+    if (!startupUpdateCheck.current) {
+      startupUpdateCheck.current = true;
+      void getVersion().then(setAppVersion);
+      void checkForUpdate();
+    }
+    return () => {
+      void updateResource.current?.close();
+      updateResource.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -269,6 +293,61 @@ export default function App() {
       setError(`${ui.operationFailed}: ${commandErrorText(e, language)}`);
     } finally {
       setDailyCheckBusy(false);
+    }
+  }
+
+  async function checkForUpdate() {
+    if (updateState.kind === "checking" || updateState.kind === "downloading"
+      || updateState.kind === "installing") return;
+    setUpdateState({ kind: "checking" });
+    try {
+      const available = await check({ timeout: 15_000 });
+      if (updateResource.current && updateResource.current !== available) {
+        await updateResource.current.close();
+      }
+      updateResource.current = available;
+      setUpdateState(available
+        ? { kind: "available", version: available.version }
+        : { kind: "current" });
+    } catch (e) {
+      setUpdateState({ kind: "error", message: commandErrorText(e, language) });
+    }
+  }
+
+  async function installUpdate() {
+    const update = updateResource.current;
+    if (!update || updateState.kind !== "available") return;
+    let downloaded = 0;
+    let contentLength: number | undefined;
+    setUpdateState({ kind: "downloading", progress: null });
+    try {
+      await update.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          contentLength = event.data.contentLength;
+        } else if (event.event === "Progress") {
+          downloaded += event.data.chunkLength;
+        }
+        const progress = contentLength && contentLength > 0
+          ? Math.min(100, Math.round((downloaded / contentLength) * 100))
+          : null;
+        setUpdateState({ kind: "downloading", progress });
+      }, { timeout: 5 * 60_000 });
+      setUpdateState({ kind: "installing" });
+      await relaunch();
+    } catch (e) {
+      setUpdateState({ kind: "error", message: commandErrorText(e, language) });
+    }
+  }
+
+  function updateStatusText() {
+    switch (updateState.kind) {
+      case "idle": return ui.currentVersion(appVersion);
+      case "checking": return ui.checkingForUpdates;
+      case "current": return `${ui.currentVersion(appVersion)} · ${ui.updateCurrent}`;
+      case "available": return `${ui.currentVersion(appVersion)} · ${ui.updateAvailable(updateState.version)}`;
+      case "downloading": return ui.updateDownloading(updateState.progress);
+      case "installing": return ui.updateInstalling;
+      case "error": return `${ui.currentVersion(appVersion)} · ${ui.updateCheckFailed}`;
     }
   }
 
@@ -620,6 +699,24 @@ export default function App() {
               onClick={toggleDailyCheck}
             >
               <span />
+            </button>
+          </div>
+          <h2>{ui.updates}</h2>
+          <div className="setting-card">
+            <div className="setting-copy">
+              <strong>{ui.applicationVersion}</strong>
+              <span title={updateState.kind === "error" ? updateState.message : undefined}>
+                {updateStatusText()}
+              </span>
+            </div>
+            <button
+              type="button"
+              className={updateState.kind === "available" ? "primary setting-action" : "ghost setting-action"}
+              disabled={updateState.kind === "checking" || updateState.kind === "downloading"
+                || updateState.kind === "installing"}
+              onClick={updateState.kind === "available" ? installUpdate : checkForUpdate}
+            >
+              {updateState.kind === "available" ? ui.installUpdate : ui.checkForUpdates}
             </button>
           </div>
         </section>

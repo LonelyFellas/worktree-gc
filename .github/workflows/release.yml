@@ -47,6 +47,8 @@ jobs:
         run: |
           pnpm --dir gui install --frozen-lockfile
           pnpm --dir gui build
+      - name: Updater manifest quality gate
+        run: node --test scripts/generate-updater-manifest.test.mjs
 
   build:
     name: Build ${{ matrix.label }}
@@ -104,13 +106,17 @@ jobs:
           - os: macos-14
             label: macos-aarch64
             target: aarch64-apple-darwin
-            bundles: dmg
+            bundles: dmg,app
             artifacts: gui/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            updater_artifact: gui/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
+            updater_name: worktree-gc-updater-darwin-aarch64.tar.gz
           - os: macos-15-intel
             label: macos-x86_64
             target: x86_64-apple-darwin
-            bundles: dmg
+            bundles: dmg,app
             artifacts: gui/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+            updater_artifact: gui/src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz
+            updater_name: worktree-gc-updater-darwin-x86_64.tar.gz
           - os: windows-latest
             label: windows-x86_64
             target: x86_64-pc-windows-msvc
@@ -118,6 +124,8 @@ jobs:
             artifacts: |
               gui/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
               gui/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            updater_artifact: gui/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            updater_name: worktree-gc-updater-windows-x86_64.exe
           - os: ubuntu-22.04
             label: linux-x86_64
             target: x86_64-unknown-linux-gnu
@@ -125,6 +133,8 @@ jobs:
             artifacts: |
               gui/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
               gui/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
+            updater_artifact: gui/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
+            updater_name: worktree-gc-updater-linux-x86_64.AppImage
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -145,12 +155,32 @@ jobs:
       - name: Test macOS GUI backend
         if: matrix.label == 'macos-aarch64'
         run: cargo test --manifest-path gui/src-tauri/Cargo.toml --all-targets --locked
-      - name: Build unsigned GUI installers
-        run: pnpm --dir gui tauri build --target ${{ matrix.target }} --bundles "${{ matrix.bundles }}" --no-sign
+      - name: Verify updater signing key
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: test -n "$TAURI_SIGNING_PRIVATE_KEY"
+      - name: Build GUI installers and signed updater artifacts
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: pnpm --dir gui tauri build --target ${{ matrix.target }} --bundles "${{ matrix.bundles }}"
+      - name: Stage updater artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact=$(compgen -G '${{ matrix.updater_artifact }}' | head -n 1)
+          test -n "$artifact"
+          test -s "$artifact.sig"
+          mkdir -p updater-release
+          cp "$artifact" "updater-release/${{ matrix.updater_name }}"
+          cp "$artifact.sig" "updater-release/${{ matrix.updater_name }}.sig"
       - uses: actions/upload-artifact@v4
         with:
           name: release-gui-${{ matrix.label }}
-          path: ${{ matrix.artifacts }}
+          path: |
+            ${{ matrix.artifacts }}
+            updater-release/*
           if-no-files-found: error
 
   publish:
@@ -160,6 +190,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: release-*
@@ -178,6 +209,14 @@ jobs:
             cp "$file" "release-assets/$name"
           done < <(find artifacts -type f -print0)
           compgen -G 'release-assets/*' > /dev/null
+      - name: Create updater manifest
+        run: |
+          node scripts/generate-updater-manifest.mjs \
+            --assets release-assets \
+            --output release-assets/latest.json \
+            --tag "$GITHUB_REF_NAME" \
+            --repository "$GITHUB_REPOSITORY" \
+            --pub-date "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
       - name: Create checksums
         working-directory: release-assets
         run: find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
