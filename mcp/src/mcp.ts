@@ -22,7 +22,7 @@ export function createWorktreeGcServer(scanner: Scanner = scanWorktrees): McpSer
   const server = new McpServer(
     {
       name: "worktree-gc",
-      version: "0.1.3",
+      version: "0.1.4",
     },
     {
       instructions:

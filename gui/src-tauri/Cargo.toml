@@ -1,6 +1,6 @@
 [package]
 name = "worktree-gc"
-version = "0.1.3"
+version = "0.1.4"
 description = "worktree-gc 的可视化界面"
 authors = ["darwish"]
 edition = "2021"
