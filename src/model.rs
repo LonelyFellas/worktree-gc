@@ -18,17 +18,19 @@ pub enum GateId {
     Recent,
     /// A3：目标确实是可重建的构建产物（被忽略、无 tracked 文件、在根内、非 symlink）。
     CacheSafe,
-    /// B1：无未提交改动。
+    /// B1：整个 worktree 已达到配置的空闲时长。
+    Idle,
+    /// B2：无未提交改动。
     Dirty,
-    /// B2：工作已进主干。
+    /// B3：工作已进主干。
     Landed,
-    /// B3：无独有的敏感文件。
+    /// B4：无独有的敏感文件。
     Precious,
-    /// B4：内部没有嵌套的其它 worktree / git 仓。
+    /// B5：内部没有嵌套的其它 worktree / git 仓。
     Nested,
-    /// B5：不处于 rebase / merge / cherry-pick / bisect 中间态。
+    /// B6：不处于 rebase / merge / cherry-pick / bisect 中间态。
     InProgress,
-    /// B6：未被 `git worktree lock` 锁定。
+    /// B7：未被 `git worktree lock` 锁定。
     Locked,
 }
 
@@ -36,8 +38,9 @@ impl GateId {
     /// A 组：回收构建缓存所需的门禁。
     pub const CACHE: [GateId; 3] = [GateId::Busy, GateId::Recent, GateId::CacheSafe];
 
-    /// B 组：删除整个 worktree 额外需要的门禁（在 A 组之上）。
-    pub const REMOVE: [GateId; 6] = [
+    /// B 组：删除整个 worktree 在 Busy 之外额外需要的门禁。
+    pub const REMOVE: [GateId; 7] = [
+        GateId::Idle,
         GateId::Dirty,
         GateId::Landed,
         GateId::Precious,
@@ -51,6 +54,7 @@ impl GateId {
             GateId::Busy => "busy",
             GateId::Recent => "recent",
             GateId::CacheSafe => "cache-safe",
+            GateId::Idle => "idle",
             GateId::Dirty => "dirty",
             GateId::Landed => "landed",
             GateId::Precious => "precious",

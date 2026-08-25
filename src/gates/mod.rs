@@ -2,7 +2,7 @@
 //!
 //! 两组门禁对应两个破坏性等级完全不同的动作：
 //! - **A 组**（[`GateId::CACHE`]）：回收构建缓存，只丢可重建的产物。
-//! - **B 组**（[`GateId::REMOVE`]）：删除整个 worktree，在 A 组之上再加六道。
+//! - **B 组**（[`GateId::REMOVE`]）：删除整个 worktree，在 Busy 之上再加七道。
 //!
 //! 拆开不是为了整齐。原型阶段的致命缺陷正是缓存回收**完全不受门禁约束**，
 //! 会对正在构建的 worktree 抽走 target、对入库的 `dist/` 直接 rm -rf。
@@ -12,7 +12,7 @@ pub mod busy;
 pub mod cachesafe;
 pub mod recent;
 
-// B 组：删除整个 worktree（在 A 组之上）
+// B 组：删除整个 worktree（Busy 之外的额外门禁）
 pub mod dirty;
 pub mod inprogress;
 pub mod landed;

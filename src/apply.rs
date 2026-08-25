@@ -15,9 +15,15 @@
 use crate::config::ScanConfig;
 use crate::fsops::FsOps;
 use crate::gates::{
-    Gate, GateCtx, busy::BusyGate, cachesafe::CacheSafeGate, dirty::DirtyGate,
-    inprogress::InProgressGate, locked::LockedGate, nested::NestedGate, precious::PreciousGate,
-    recent::RecentGate,
+    Gate, GateCtx,
+    busy::BusyGate,
+    cachesafe::CacheSafeGate,
+    dirty::DirtyGate,
+    inprogress::InProgressGate,
+    locked::LockedGate,
+    nested::NestedGate,
+    precious::PreciousGate,
+    recent::{IdleGate, RecentGate},
 };
 use crate::model::{Cause, GateStatus};
 use crate::plan::{Action, Plan};
@@ -269,6 +275,9 @@ fn recheck_removal(
         forge: env.forge.as_ref(),
     };
     if let Some(outcome) = recheck_gate(&BusyGate, &initial_ctx) {
+        return Some(outcome);
+    }
+    if let Some(outcome) = recheck_gate(&IdleGate, &initial_ctx) {
         return Some(outcome);
     }
 

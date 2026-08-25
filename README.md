@@ -87,10 +87,11 @@ Two gate groups for two very different blast radii:
 | Recent | The cache directory itself has been quiet for N minutes |
 | CacheSafe | Ignored by git · contains no tracked files · inside the worktree root · not a symlink · matches a known cache rule and ecosystem marker |
 
-**B — remove the whole worktree** (A plus six more)
+**B — remove the whole worktree** (Busy plus seven worktree-level gates)
 
 | Gate | Requires |
 |---|---|
+| Idle | The worktree itself has been quiet for N hours |
 | Dirty | No uncommitted changes, including under `showUntrackedFiles=no` and `skip-worktree` |
 | Landed | Work is in the trunk — ancestry, forge API, or path-restricted diff for squash merges |
 | Precious | No ignored file that is not a known build cache (blacklist, not whitelist) |

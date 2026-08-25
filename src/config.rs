@@ -107,9 +107,8 @@ pub struct ScanConfig {
     pub repos: Vec<PathBuf>,
     /// 种子目录：在这些位置下找 agent 留下的 worktree。
     pub seeds: Vec<PathBuf>,
-    /// 空闲阈值。**这道门只作进程检测的弱代理，不单独作为放行依据**——
-    /// worktree 的 mtime 由 agent 批量写入决定，「24 小时没动」既可能是干完了，
-    /// 也可能是在等 review，误判代价不对称。
+    /// 删除整个 worktree 前要求的空闲阈值。它只作 Busy 的时间侧补充，
+    /// 不影响可重建缓存的回收，也不能绕过 Dirty、Landed 等其它删除门禁。
     pub idle: Duration,
     pub cache_rules: Vec<CacheRule>,
     pub precious: PreciousPolicy,

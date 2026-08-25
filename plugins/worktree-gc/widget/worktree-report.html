@@ -456,6 +456,7 @@
         Busy: "有进程占用",
         Recent: "近期仍在写入",
         CacheSafe: "不是纯构建缓存",
+        Idle: "worktree 尚未空闲满设定时长",
         Dirty: "存在未提交改动",
         Landed: "尚未进入主干",
         Precious: "存在独有文件",
@@ -686,7 +687,7 @@
       async function connectBridge() {
         try {
           await sendRequest("ui/initialize", {
-            appInfo: { name: "worktree-gc-report", version: "0.1.5" },
+            appInfo: { name: "worktree-gc-report", version: "0.1.6" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });

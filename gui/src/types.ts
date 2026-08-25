@@ -3,7 +3,7 @@
 
 export type GateId =
   | "Busy" | "Recent" | "CacheSafe"
-  | "Dirty" | "Landed" | "Precious" | "Nested" | "InProgress" | "Locked";
+  | "Idle" | "Dirty" | "Landed" | "Precious" | "Nested" | "InProgress" | "Locked";
 
 export type Cause =
   | { CommandFailed: { cmd: string; code: number | null; stderr: string } }

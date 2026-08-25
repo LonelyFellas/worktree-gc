@@ -393,7 +393,7 @@ export default function App() {
     try {
       const r = await invoke<string[]>("default_repos");
       setRepos(r);
-      if (r.length) setReport(await invoke<ScanReport>("scan_repos", { repos: r, offline: false }));
+      setReport(await invoke<ScanReport>("scan_repos", { repos: r, offline: false }));
     } catch (e) { setError(`${ui.operationFailed}: ${commandErrorText(e, language)}`); }
     finally {
       setHasScanned(true);
@@ -698,7 +698,7 @@ export default function App() {
         </Collapsible>
       )}
 
-      {repos.length === 0 && hasScanned && !busy && (
+      {repos.length === 0 && items.length === 0 && hasScanned && !busy && (
         <div className="onboard">
           <p>{ui.noRepos}</p>
           <button className="primary" onClick={addRepo}>{ui.addRepo}</button>

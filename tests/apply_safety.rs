@@ -118,6 +118,13 @@ fn removal_plan(repo: &TempRepo, worktree: PathBuf, head: String) -> wtgc::plan:
     }
 }
 
+fn no_idle_wait() -> ScanConfig {
+    ScanConfig {
+        idle: std::time::Duration::ZERO,
+        ..ScanConfig::default()
+    }
+}
+
 // ───────────────────────── plan 层：勾选不是授权 ─────────────────────────
 
 #[test]
@@ -257,22 +264,44 @@ fn a_worktree_that_became_busy_is_skipped_not_deleted() {
 
 #[test]
 fn new_uncommitted_changes_since_scan_abort_the_removal() {
-    let r = report_with(vec![wt(
-        "/repo/wt",
-        Verdict::Removable,
-        fingerprint(0, vec![]),
-    )]);
-    let sel = Selection {
-        remove: HashSet::from([PathBuf::from("/repo/wt")]),
-        ..Default::default()
-    };
-    let p = plan(&r, &sel);
+    let repo = TempRepo::new();
+    repo.write("a.txt", "x");
+    let head = repo.commit("init");
+    let worktree = repo.worktree("wt", &head);
+    let p = removal_plan(&repo, worktree.clone(), head);
+    std::fs::write(worktree.join("a.txt"), "changed").expect("制造未提交改动");
 
-    // status 现在吐出两条改动，而指纹记的是 0
-    let mut git = RecordingGit::new();
-    git.stdout = b" M a.txt\0 M b.txt\0".to_vec();
-    let fs = SpyFs::new();
-    let env = env_with(git, vec![]);
+    let (git, _) = RecordingRealGit::new(false);
+    let env = env_with_runner(git, vec![]);
+    let out = apply(
+        &p,
+        &ApplyOptions {
+            dry_run: false,
+            audit_log: None,
+        },
+        &no_idle_wait(),
+        &env,
+        &SpyFs::new(),
+    );
+
+    assert!(
+        matches!(out.results[0].outcome, Outcome::Stale { .. }),
+        "扫描后新增的改动必须中止删除，实际 {:?}",
+        out.results[0].outcome
+    );
+    assert!(worktree.exists(), "新增未提交改动后必须保留 worktree");
+}
+
+#[test]
+fn recently_touched_worktree_is_skipped_before_removal() {
+    let repo = TempRepo::new();
+    repo.write("a.txt", "x");
+    let head = repo.commit("init");
+    let worktree = repo.worktree("wt", &head);
+    let p = removal_plan(&repo, worktree.clone(), head);
+
+    let (git, calls) = RecordingRealGit::new(false);
+    let env = env_with_runner(git, vec![]);
     let out = apply(
         &p,
         &ApplyOptions {
@@ -281,13 +310,22 @@ fn new_uncommitted_changes_since_scan_abort_the_removal() {
         },
         &ScanConfig::default(),
         &env,
-        &fs,
+        &SpyFs::new(),
     );
 
     assert!(
         matches!(out.results[0].outcome, Outcome::Stale { .. }),
-        "扫描后新增的改动必须中止删除，实际 {:?}",
+        "执行前必须重查 idle，实际 {:?}",
         out.results[0].outcome
+    );
+    assert!(worktree.exists(), "idle 未满足时 worktree 必须保留");
+    assert!(
+        !calls
+            .lock()
+            .expect("调用日志锁")
+            .iter()
+            .any(|call| call.starts_with("worktree remove ")),
+        "idle 未满足时不得调用 git worktree remove"
     );
 }
 
@@ -312,7 +350,7 @@ fn failed_worktree_remove_never_falls_back_to_force_or_rm() {
             dry_run: false,
             audit_log: None,
         },
-        &ScanConfig::default(),
+        &no_idle_wait(),
         &env,
         &fs,
     );
@@ -349,7 +387,7 @@ fn removal_command_never_carries_force() {
             dry_run: false,
             audit_log: None,
         },
-        &ScanConfig::default(),
+        &no_idle_wait(),
         &env,
         &SpyFs::new(),
     );

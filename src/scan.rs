@@ -1,9 +1,9 @@
-//! 扫描编排：把九道门禁串成对整机仓库的判定。
+//! 扫描编排：把十道门禁串成对整机仓库的判定。
 //!
 //! 这一层只读，不做任何破坏性动作。它的产出 [`ScanReport`] 是后续 plan/apply 的唯一输入。
 //!
 //! 两个层级的门禁不能混为一谈：
-//! - **worktree 级**：Busy + B 组六道 → 决定整个 worktree 能不能删
+//! - **worktree 级**：Busy + B 组七道 → 决定整个 worktree 能不能删
 //! - **缓存目录级**：Busy（继承自 worktree）+ Recent + CacheSafe → 决定这个 target/ 能不能回收
 //!
 //! 一个 worktree 完全可能"不能删、但缓存能回收"——这正是最常见也最有价值的那种情形。
@@ -134,6 +134,10 @@ fn scan_worktree(
     }
 
     let b_gates: Vec<GateOutcome> = vec![
+        GateOutcome {
+            id: GateId::Idle,
+            status: recent::IdleGate.evaluate(&ctx),
+        },
         GateOutcome {
             id: GateId::Dirty,
             status: dirty::DirtyGate.evaluate(&ctx),

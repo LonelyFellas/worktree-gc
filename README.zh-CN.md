@@ -85,10 +85,11 @@ AI coding agent（Claude Code、Codex、Cursor 等）会为每个任务开一个
 | Recent | 缓存目录本身已安静 N 分钟 |
 | CacheSafe | 被 git 忽略 · 不含任何 tracked 文件 · 位于 worktree 根内 · 非符号链接 · 匹配已知缓存规则及生态 marker |
 
-**B 组 —— 删除整个 worktree**（A 组之上再加六道）
+**B 组 —— 删除整个 worktree**（Busy 加七道 worktree 级门禁）
 
 | 门禁 | 要求 |
 |---|---|
+| Idle | worktree 本身已安静 N 小时 |
 | Dirty | 无未提交改动，`showUntrackedFiles=no` 与 `skip-worktree` 两种击穿路径也要堵住 |
 | Landed | 工作已进主干 —— 祖先判定、forge API、或针对 squash-merge 的路径受限 diff |
 | Precious | 没有「不属于已知构建缓存」的忽略文件（黑名单语义，不是白名单） |
