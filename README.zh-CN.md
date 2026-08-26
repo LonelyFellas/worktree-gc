@@ -143,6 +143,27 @@ wtgc --repo /仓库路径 remove
 `--repo` 可以严格限制扫描范围；脚本可使用 `--json`，`--offline` 可以禁止查询 forge。
 `--seed` 用于添加自定义种子目录，与 `--no-default-seeds` 一起使用可以排除内置落点。
 
+### 在 worktree 之间共享依赖缓存
+
+在桌面端右键监控中的仓库，再选择 **Worktree 共享缓存**。应用会检测 Cargo、Gradle、
+pnpm、Dart/Flutter 和 uv 项目。设置保存在仓库之外：macOS/Linux
+使用 `~/.config/worktree-gc/shared-cache.json`，Windows 使用
+`%APPDATA%\worktree-gc\shared-cache.json`。
+
+只有显式通过包装命令启动构建时，设置才会生效：
+
+```bash
+wtgc --repo /仓库路径 run -- cargo test
+wtgc --repo /仓库路径 run -- pnpm install
+wtgc --repo /仓库路径 run -- flutter build apk
+```
+
+共享范围仅限各工具的外部缓存：sccache、Gradle Build Cache、pnpm store、
+`PUB_CACHE` 与 uv cache。`target`、`node_modules`、`.dart_tool`、`build`、`.venv`
+仍归各 worktree 独占。`wtgc` 不修改仓库或工具的全局配置，不会把这些共享缓存纳入回收，
+也不会自动安装缺少的工具；如果已启用 sccache 但系统里找不到它，`wtgc run` 会在启动
+构建命令前停止。
+
 ## 要解决的问题
 
 AI coding agent（Claude Code、Codex、Cursor 等）会为每个任务开一个独立的 git worktree，

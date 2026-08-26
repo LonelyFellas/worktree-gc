@@ -19,6 +19,7 @@ pub mod plan;
 pub mod platform;
 pub mod report;
 pub mod scan;
+pub mod shared_cache;
 pub mod sizing;
 
 #[cfg(any(test, feature = "testkit"))]

@@ -42,12 +42,42 @@ button:not(:disabled):hover { opacity:.85; }
 .setting-copy span { color:var(--muted); font-size:12px; }
 .setting-copy code { background:var(--bg); padding:1px 5px; border-radius:3px; }
 .setting-action { flex:0 0 auto; white-space:nowrap; }
+.setting-section-note { color:var(--muted); font-size:12px; margin:-2px 0 10px;
+  line-height:1.5; }
+.setting-section-note code { background:var(--faint); color:var(--fg); padding:2px 5px;
+  border-radius:4px; }
 .segmented { flex:0 0 auto; display:flex; padding:2px; border-radius:9px;
   background:var(--line); }
 .segmented button { min-width:54px; padding:5px 12px; border-radius:7px;
   background:transparent; color:var(--muted); }
 .segmented button.active { background:var(--bg); color:var(--fg);
   box-shadow:0 1px 3px rgba(0,0,0,.12); }
+
+.cache-repo-card { padding:var(--setting-y) var(--setting-x); border-radius:12px;
+  background:var(--faint); }
+.cache-repo-card + .cache-repo-card { margin-top:8px; }
+.cache-repo-head, .cache-adapter-head { display:flex; align-items:center; gap:12px; }
+.cache-repo-head { padding-bottom:10px; }
+.cache-adapter { border-top:1px solid var(--line); padding:11px 0; }
+.cache-adapter:last-child { padding-bottom:0; }
+.cache-state { flex:0 0 auto; border-radius:999px; padding:2px 8px;
+  font-size:10.5px; font-weight:500; }
+.cache-state.shared, .cache-state.configured { color:var(--ok);
+  background:color-mix(in srgb,var(--ok) 10%,transparent); }
+.cache-state.available { color:var(--accent);
+  background:color-mix(in srgb,var(--accent) 10%,transparent); }
+.cache-state.missing_tool { color:var(--warn);
+  background:color-mix(in srgb,var(--warn) 10%,transparent); }
+.cache-path-field { display:flex; flex-direction:column; gap:5px; margin-top:8px; }
+.cache-path-field > span { color:var(--muted); font-size:11.5px; }
+.cache-path-field input { width:100%; border:1px solid var(--line); border-radius:8px;
+  padding:7px 9px; background:var(--bg); color:var(--fg); font:12px/1.4 ui-monospace,
+  SFMono-Regular,Menlo,monospace; outline:none; }
+.cache-path-field input:focus { border-color:var(--accent);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent); }
+.cache-warning, .cache-empty { color:var(--warn); font-size:11.5px; margin:7px 0 0;
+  line-height:1.45; }
+.cache-empty { color:var(--muted); }
 
 /* 头条 —— 只放「现在就能动手」的量，且动作紧挨着它 */
 .hero { display:flex; align-items:center; gap:16px; background:var(--faint);
@@ -134,7 +164,7 @@ h2 em { font-style:normal; background:var(--faint); border-radius:10px;
 .done-line { margin-top:6px; color:var(--muted); font-size:12px; }
 
 /* 确认面板：破坏性动作必须有一道明确的门，且要说清代价 */
-.sheet { position:fixed; inset:0; background:rgba(0,0,0,.35);
+.sheet { position:fixed; inset:0; z-index:150; background:rgba(0,0,0,.35);
   display:flex; align-items:center; justify-content:center; padding:24px;
   backdrop-filter:blur(3px); }
 .sheet-body { background:var(--bg); border-radius:16px; padding:24px;
@@ -347,14 +377,28 @@ h2 em { font-style:normal; background:var(--faint); border-radius:10px;
   box-shadow:0 8px 24px rgba(0,0,0,.16); backdrop-filter:blur(10px);
   opacity:.94; font-size:12.5px; font-weight:500; }
 
-/* 移除按钮平时不出现。每行都挂一个「移除」等于每行都在喊，
-   而移除是几周才做一次的事。 */
-.x { background:transparent; color:var(--muted); width:18px; height:18px;
-  padding:0; font-size:16px; line-height:1; border-radius:5px;
-  display:grid; place-items:center; opacity:0; transition:opacity .15s,color .15s; }
-.repo-card:hover .x, .repo-card:focus-within .x { opacity:.6; }
-.repo-card .x:hover, .repo-card .x:focus-visible { opacity:1; }
-.x:hover { color:#ff3b30; background:color-mix(in srgb,#ff3b30 10%,transparent); }
+.repo-context-layer { position:fixed; inset:0; z-index:200; }
+.repo-context-menu { position:absolute; width:180px; padding:5px;
+  border:1px solid var(--line); border-radius:10px; background:color-mix(in srgb,var(--bg) 94%,transparent);
+  box-shadow:0 10px 30px rgba(0,0,0,.18); backdrop-filter:blur(14px); }
+.repo-context-menu button { width:100%; padding:7px 10px; border-radius:7px;
+  background:transparent; color:var(--fg); text-align:left; font-size:12.5px; }
+.repo-context-menu button:hover, .repo-context-menu button:focus-visible {
+  background:var(--faint); opacity:1; outline:none; }
+.repo-context-separator { height:1px; margin:4px 6px; background:var(--line); }
+.repo-context-menu .repo-context-danger { color:#d70015; }
+.repo-context-menu .repo-context-danger:hover,
+.repo-context-menu .repo-context-danger:focus-visible {
+  background:color-mix(in srgb,#d70015 9%,transparent); }
+
+.cache-sheet-body { width:min(560px,100%); max-height:calc(100vh - 48px); overflow-y:auto; }
+.cache-dialog-head { display:flex; align-items:flex-start; gap:18px; margin-bottom:16px; }
+.cache-dialog-head > div { flex:1; min-width:0; }
+.cache-dialog-head h3 { margin:0 0 4px; }
+.cache-dialog-head p { margin:0; color:var(--muted); font-size:12px; line-height:1.5; }
+.cache-dialog-close { flex:0 0 auto; width:28px; height:28px; padding:0;
+  display:grid; place-items:center; background:var(--faint); color:var(--muted); font-size:18px; }
+.cache-run-note { margin:14px 0 0; }
 
 .side-note { color:var(--muted); font-size:12px; margin:8px 0 0; }
 .switch { flex:0 0 auto; width:38px; height:22px; padding:2px; border-radius:11px;
