@@ -9,15 +9,14 @@
 
 Safely reclaim disk space from git worktrees left behind by AI coding agents.
 
-> ⚠️ **Status: early development.** The desktop app reclaims approved build caches;
-> removing whole worktrees is currently CLI-only and still requires an explicit `--apply`.
-> The Codex plugin is read-only.
+> ⚠️ **Status: early development.** The desktop app reclaims approved build caches and can
+> force-remove one explicitly confirmed worktree at a time. The Codex plugin is read-only.
 
 ## Choose an interface
 
 | Interface | Best for | Can change files? |
 |---|---|---|
-| **Desktop app** | Interactive scanning and cache reclamation | Only after confirmation; build caches only |
+| **Desktop app** | Interactive scanning, cache reclamation, and single-worktree removal | Only after confirmation |
 | **Codex plugin** | Asking Codex to inspect and explain worktrees | No — always read-only |
 | **CLI (`wtgc`)** | Scripts, automation, and advanced cleanup | Dry-run by default; requires `--apply` |
 
@@ -28,8 +27,8 @@ Safely reclaim disk space from git worktrees left behind by AI coding agents.
 The desktop app keeps every decision visible:
 
 - **Safe to reclaim** lists only rebuildable caches that passed every safety gate.
-- **Needs attention** explains why a worktree was blocked and what to do next.
-- **No action needed** keeps active or protected worktrees visible without offering cleanup.
+- **Needs attention** explains why a worktree was blocked and still allows a deliberate manual removal.
+- **No action needed** keeps active or protected worktrees visible.
 
 ## Install the desktop app
 
@@ -45,7 +44,9 @@ Download the installer for your platform from the
 
 Open the app, add the repositories you want to monitor, then scan. Reclamation is
 confirmation-gated and only removes caches that pass all safety checks; source files and
-uncommitted changes are left untouched.
+uncommitted changes are left untouched. Removing a worktree is a separate manual override:
+type its branch name to authorize `git worktree remove --force`. This deletes all files in that
+worktree, including uncommitted or untracked work, but preserves the Git branch ref.
 
 The app checks for Tauri-signed updates at startup and from **Settings → App updates**. The
 update feed supports the macOS app, Windows setup executable, and Linux AppImage; use the

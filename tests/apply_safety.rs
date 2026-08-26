@@ -12,7 +12,7 @@ use wtgc::config::ScanConfig;
 use wtgc::gates::{ProcInfo, SystemClock};
 use wtgc::git::{GitExec, GitRunner, RealGit};
 use wtgc::model::*;
-use wtgc::plan::{Action, Selection, plan};
+use wtgc::plan::{Action, Selection, force_remove, plan};
 use wtgc::scan::Env;
 use wtgc::testkit::{FakeProcs, RecordingGit, SpyFs, TempRepo, test_git};
 
@@ -182,6 +182,47 @@ fn everything_allowed_never_picks_up_blocked_items() {
         !sel.remove.contains(&PathBuf::from("/repo/bad")),
         "--yes 也不该碰被拦下的"
     );
+}
+
+#[test]
+fn manual_force_remove_plans_exactly_one_blocked_worktree() {
+    let r = report_with(vec![
+        wt(
+            "/repo/blocked",
+            Verdict::Blocked {
+                by: vec![GateId::Landed, GateId::Dirty],
+            },
+            fingerprint(1, vec![]),
+        ),
+        wt("/repo/other", Verdict::Removable, fingerprint(0, vec![])),
+    ]);
+
+    let p = force_remove(&r, std::path::Path::new("/repo/blocked"));
+
+    assert_eq!(p.actions.len(), 1, "人工确认只授权指定的单个 worktree");
+    assert!(matches!(
+        &p.actions[0],
+        Action::ForceRemoveWorktree { worktree, .. }
+            if worktree == std::path::Path::new("/repo/blocked")
+    ));
+}
+
+#[test]
+fn manual_force_remove_never_plans_the_main_worktree() {
+    let mut main = wt(
+        "/repo",
+        Verdict::Protected {
+            why: "主工作区"
+        },
+        fingerprint(0, vec![]),
+    );
+    main.is_main = true;
+    let r = report_with(vec![main]);
+
+    let p = force_remove(&r, std::path::Path::new("/repo"));
+
+    assert!(p.actions.is_empty(), "主工作区不进入人工强制删除计划");
+    assert_eq!(p.rejected.len(), 1, "拒绝原因必须明确返回");
 }
 
 // ───────────────────────── apply 层：dry-run 必须真的什么都不做 ─────────────────────────
@@ -406,6 +447,90 @@ fn removal_command_never_carries_force() {
             .split_whitespace()
             .any(|arg| arg == "--force" || arg == "-f"),
         "删除命令绝不能带 --force，实际: {removal}"
+    );
+}
+
+#[test]
+fn confirmed_force_removal_deletes_dirty_worktree_but_keeps_branch_ref() {
+    let repo = TempRepo::new();
+    repo.write("a.txt", "x");
+    repo.commit("init");
+    let worktree = repo.root.join("wt");
+    let worktree_arg = worktree.to_string_lossy().into_owned();
+    repo.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "manual-delete",
+        &worktree_arg,
+        "HEAD",
+    ]);
+    let worktree = worktree.canonicalize().expect("canonicalize worktree");
+    let head = repo.head();
+    std::fs::write(worktree.join("a.txt"), "changed").expect("制造未提交改动");
+
+    let report = ScanReport {
+        repos: vec![RepoReport {
+            root: repo.root.clone(),
+            baseline: None,
+            baseline_error: None,
+            worktrees: vec![WorktreeReport {
+                path: worktree.clone(),
+                branch: Some("manual-delete".into()),
+                head_oid: head.clone(),
+                is_main: false,
+                bytes: 100,
+                caches: Vec::new(),
+                outcomes: Vec::new(),
+                verdict: Verdict::Blocked {
+                    by: vec![GateId::Dirty],
+                },
+                fingerprint: Fingerprint {
+                    head_oid: head,
+                    dirty_count: 1,
+                    busy_pids: Vec::new(),
+                    precious_digest: String::new(),
+                },
+            }],
+            prunable: Vec::new(),
+        }],
+        available_bytes: 0,
+        tools: Vec::new(),
+    };
+    let p = force_remove(&report, &worktree);
+    let (git, calls) = RecordingRealGit::new(false);
+    let env = env_with_runner(git, vec![]);
+
+    let out = apply(
+        &p,
+        &ApplyOptions {
+            dry_run: false,
+            audit_log: None,
+        },
+        &no_idle_wait(),
+        &env,
+        &SpyFs::new(),
+    );
+
+    assert!(
+        matches!(out.results[0].outcome, Outcome::Done { .. }),
+        "明确确认后应允许删除有改动的 worktree，实际 {:?}",
+        out.results[0].outcome
+    );
+    assert!(!worktree.exists(), "worktree 目录应已删除");
+    assert_eq!(
+        repo.git(&["branch", "--list", "manual-delete"]).trim(),
+        "manual-delete"
+    );
+    let calls = calls.lock().expect("调用日志锁");
+    let removal = calls
+        .iter()
+        .find(|call| call.starts_with("worktree remove "))
+        .expect("应发出 worktree remove");
+    assert!(
+        removal.split_whitespace().any(|arg| arg == "--force"),
+        "人工确认路径必须显式使用 --force，实际: {removal}"
     );
 }
 

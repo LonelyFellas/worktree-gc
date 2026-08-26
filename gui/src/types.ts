@@ -78,6 +78,13 @@ export type ScanReport = {
 export type ScanEnvelope = {
   scan_id: string;
   report: ScanReport;
+  remove_targets: RemoveTarget[];
+};
+
+export type RemoveTarget = {
+  id: string;
+  path: string;
+  confirmation: string;
 };
 
 /// 与 Rust 侧 platform::disk::human_bytes 同口径（1024 进制、一位小数），
