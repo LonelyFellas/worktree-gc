@@ -28,6 +28,7 @@ button:disabled { opacity:.4; cursor:default; }
 button:not(:disabled):hover { opacity:.85; }
 .primary { background:var(--accent); color:#fff; }
 .ghost { background:var(--faint); color:var(--fg); }
+.danger { background:#d70015; color:#fff; }
 
 /* 设置页先承载稳定的界面偏好，后续设置按同样的卡片结构向下增加。 */
 .settings-page h2 { margin-bottom:8px; }
@@ -82,6 +83,9 @@ h2 em { font-style:normal; background:var(--faint); border-radius:10px;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .row-size { font-variant-numeric:tabular-nums; font-size:13px; color:var(--muted); }
 .row.ok .row-size { color:var(--ok); font-weight:500; }
+.row-remove { flex:0 0 auto; padding:4px 10px; margin-left:2px;
+  background:transparent; color:#d70015; font-size:12px; }
+.row-remove:hover { background:color-mix(in srgb,#d70015 9%,transparent); opacity:1; }
 .row-status { flex:0 0 auto; padding:2px 7px; border-radius:999px;
   font-size:10.5px; font-weight:500; line-height:1.45; }
 .row-status.info { color:var(--accent);
@@ -145,6 +149,18 @@ h2 em { font-style:normal; background:var(--faint); border-radius:10px;
   text-overflow:ellipsis; white-space:nowrap; }
 .sheet-body li em { font-style:normal; font-variant-numeric:tabular-nums; }
 .sheet-actions { display:flex; gap:8px; justify-content:flex-end; }
+.remove-target { display:flex; flex-direction:column; gap:2px; padding:10px 12px;
+  margin:0 0 14px; border-radius:9px; background:var(--faint); }
+.remove-target strong { font-size:13px; font-weight:600; }
+.remove-target span { color:var(--muted); font-size:11.5px; overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap; }
+.confirm-field { display:flex; flex-direction:column; gap:6px; margin-bottom:10px;
+  color:var(--fg); font-size:12.5px; }
+.confirm-field input { width:100%; border:1px solid var(--line); border-radius:8px;
+  padding:8px 10px; background:var(--bg); color:var(--fg); font:inherit; outline:none; }
+.confirm-field input:focus { border-color:var(--accent);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent); }
+.branch-preserved { margin-bottom:16px; }
 
 /* 仓库管理：清单为空时它是唯一该做的事，有内容时退到后面 */
 .onboard { text-align:center; padding:48px 24px; }

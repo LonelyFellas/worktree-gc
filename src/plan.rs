@@ -4,12 +4,12 @@
 //! 选择来自人（或 GUI 的复选框），判定来自门禁——两者不一致时一律以判定为准。
 //!
 //! 换句话说：**勾选不是授权。** 用户可以勾一个被拦下的 worktree，
-//! 但它不会进入计划。想强行删除得走另一条明确的路（`--i-know-what-im-doing`），
-//! 而那条路也绕不过抢救备份。
+//! 但它不会进入自动计划。人工强制删除必须走 GUI 的单项目标、输入分支名确认路径；
+//! 主工作区仍然不可删除。
 
 use crate::model::*;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// 用户的选择。路径是唯一标识。
 #[derive(Debug, Clone, Default)]
@@ -70,6 +70,17 @@ pub enum Action {
         bytes: u64,
         expect: Fingerprint,
     },
+    /// 用户已经逐项核对并明确接受门禁提示的风险。
+    ///
+    /// 这条动作只由交互式 GUI 的单项确认入口创建；它仍绑定扫描快照中的
+    /// repo/worktree/branch/HEAD，且主工作区永远不能进入这里。
+    ForceRemoveWorktree {
+        repo: PathBuf,
+        worktree: PathBuf,
+        branch: Option<String>,
+        bytes: u64,
+        expect: Fingerprint,
+    },
     /// 清理注册表里目录已消失的条目。
     ///
     /// `confirmed_missing` 是执行前又确认过一次确实不存在的路径——
@@ -85,7 +96,9 @@ impl Action {
     /// 真实数字以 apply 前后的可用空间差为准。
     pub fn estimated_bytes(&self) -> u64 {
         match self {
-            Action::ReclaimCache { bytes, .. } | Action::RemoveWorktree { bytes, .. } => *bytes,
+            Action::ReclaimCache { bytes, .. }
+            | Action::RemoveWorktree { bytes, .. }
+            | Action::ForceRemoveWorktree { bytes, .. } => *bytes,
             Action::PruneAdmin { .. } => 0,
         }
     }
@@ -93,7 +106,8 @@ impl Action {
     pub fn target(&self) -> &std::path::Path {
         match self {
             Action::ReclaimCache { cache, .. } => cache,
-            Action::RemoveWorktree { worktree, .. } => worktree,
+            Action::RemoveWorktree { worktree, .. }
+            | Action::ForceRemoveWorktree { worktree, .. } => worktree,
             Action::PruneAdmin { repo, .. } => repo,
         }
     }
@@ -166,6 +180,36 @@ pub fn plan(report: &ScanReport, sel: &Selection) -> Plan {
         }
     }
 
+    out
+}
+
+/// 为用户已人工确认的单个 worktree 创建强制删除计划。
+///
+/// 自动门禁不参与放行，但目标必须来自这份扫描报告，且主工作区仍不可删除。
+pub fn force_remove(report: &ScanReport, target: &Path) -> Plan {
+    let mut out = Plan::default();
+
+    for repo in &report.repos {
+        let Some(wt) = repo.worktrees.iter().find(|wt| wt.path == target) else {
+            continue;
+        };
+        if wt.is_main {
+            out.rejected
+                .push((wt.path.clone(), "主工作区不可删除".into()));
+        } else {
+            out.actions.push(Action::ForceRemoveWorktree {
+                repo: repo.root.clone(),
+                worktree: wt.path.clone(),
+                branch: wt.branch.clone(),
+                bytes: wt.bytes,
+                expect: wt.fingerprint.clone(),
+            });
+        }
+        return out;
+    }
+
+    out.rejected
+        .push((target.to_path_buf(), "目标不在当前扫描结果中".into()));
     out
 }
 

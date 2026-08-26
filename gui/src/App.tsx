@@ -13,7 +13,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type Update } from "@tauri-apps/plugin-updater";
-import type { ScanEnvelope, ScanReport } from "./types";
+import type { RemoveTarget, ScanEnvelope, ScanReport } from "./types";
 import { humanBytes } from "./types";
 import { describeDetail, statusText } from "./describe";
 import { adviceFor, primaryBlocker } from "./advice";
@@ -38,7 +38,7 @@ type DailyCheckStatus = {
   schedule: string;
 };
 type Page = "dashboard" | "settings";
-type BusyState = "scanning" | "planning" | "reclaiming";
+type BusyState = "scanning" | "planning" | "reclaiming" | "removing";
 type SidebarPosition = "left" | "right";
 type LayoutDensity = "compact" | "standard" | "comfortable";
 type RepoDropTarget = { path: string; edge: "before" | "after" };
@@ -141,10 +141,16 @@ type Item = {
   blocked: ReturnType<typeof primaryBlocker>;
   unknown: string | null;
   isMain: boolean;
+  removeTarget: RemoveTarget | null;
 };
 
-function toItems(report: ScanReport, language: Language): Item[] {
+function toItems(
+  report: ScanReport,
+  language: Language,
+  removeTargets: RemoveTarget[],
+): Item[] {
   const ui = messages[language];
+  const targetByPath = new Map(removeTargets.map((target) => [target.path, target]));
   return report.repos.flatMap((repo) =>
     repo.worktrees.map((wt) => {
       const free = wt.caches
@@ -164,6 +170,7 @@ function toItems(report: ScanReport, language: Language): Item[] {
         blocked: primaryBlocker(wt.outcomes),
         unknown: unknownOutcome ? statusText(unknownOutcome.status, language)?.text ?? null : null,
         isMain: wt.is_main,
+        removeTarget: targetByPath.get(wt.path) ?? null,
       } satisfies Item;
     }),
   );
@@ -190,7 +197,17 @@ function blockerBadge(detail: Item["blocked"], language: Language) {
   return { label: status.locked, tone: "neutral" };
 }
 
-function Row({ item, language }: { item: Item; language: Language }) {
+function Row({
+  item,
+  language,
+  disabled,
+  onRemove,
+}: {
+  item: Item;
+  language: Language;
+  disabled: boolean;
+  onRemove: (item: Item) => void;
+}) {
   const ui = messages[language];
   const advice = item.blocked ? adviceFor(item.blocked, language) : null;
   const badge = blockerBadge(item.blocked, language)
@@ -203,6 +220,16 @@ function Row({ item, language }: { item: Item; language: Language }) {
         <span className="row-name" title={item.fullPath}>{item.name}</span>
         <span className="row-branch" title={item.branch}>{item.branch}</span>
         <span className="row-size">{humanBytes(item.bytes)}</span>
+        {item.removeTarget && (
+          <button
+            type="button"
+            className="row-remove"
+            disabled={disabled}
+            onClick={() => onRemove(item)}
+          >
+            {ui.removeWorktree}
+          </button>
+        )}
       </div>
       {detail && (
         <div className={`row-why${item.unknown ? " unknown" : ""}`} title={detail}>
@@ -223,9 +250,11 @@ export default function App() {
   const [repos, setRepos] = useState<string[]>([]);
   const [report, setReport] = useState<ScanReport | null>(null);
   const [scanId, setScanId] = useState<string | null>(null);
+  const [removeTargets, setRemoveTargets] = useState<RemoveTarget[]>([]);
   const [busy, setBusy] = useState<BusyState | null>(null);
   const [pending, setPending] = useState<PlanSummary | null>(null);
   const [result, setResult] = useState<ApplySummary | null>(null);
+  const [removePrompt, setRemovePrompt] = useState<{ item: Item; input: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hasScanned, setHasScanned] = useState(false);
   const [showIdle, setShowIdle] = useState(false);
@@ -471,12 +500,14 @@ export default function App() {
     setError(null);
     setResult(null);
     setScanId(null);
+    setRemoveTargets([]);
     try {
       const r = await invoke<string[]>("default_repos");
       setRepos(r);
       const scan = await invoke<ScanEnvelope>("scan_repos", { repos: r, offline: false });
       setReport(scan.report);
       setScanId(scan.scan_id);
+      setRemoveTargets(scan.remove_targets);
     } catch (e) { setError(`${ui.operationFailed}: ${commandErrorText(e, language)}`); }
     finally {
       setHasScanned(true);
@@ -554,7 +585,35 @@ export default function App() {
     finally { setBusy(null); }
   }
 
-  const items = useMemo(() => (report ? toItems(report, language) : []), [report, language]);
+  async function confirmForceRemove() {
+    if (!scanId || !removePrompt?.item.removeTarget) return;
+    setBusy("removing");
+    setError(null);
+    try {
+      const target = removePrompt.item.removeTarget;
+      const p = await invoke<PlanSummary>("create_plan", {
+        scanId,
+        kind: "remove",
+        includeMain: false,
+        targetId: target.id,
+        confirmation: removePrompt.input,
+      });
+      const summary = await invoke<ApplySummary>("apply_plan", { id: p.id });
+      setRemovePrompt(null);
+      await refresh();
+      setResult(summary);
+    } catch (e) {
+      setRemovePrompt(null);
+      setError(`${ui.operationFailed}: ${commandErrorText(e, language)}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const items = useMemo(
+    () => (report ? toItems(report, language, removeTargets) : []),
+    [report, language, removeTargets],
+  );
   const freeNow = items.reduce((n, i) => n + i.free, 0);
   const needsYou = items.filter((i) => i.free === 0 && (i.blocked || i.unknown) && !i.isMain)
     .sort((a, b) => b.bytes - a.bytes);
@@ -775,6 +834,16 @@ export default function App() {
                 <span className="row-name" title={i.fullPath}>{i.name}</span>
                 <span className="row-branch">{i.branch}</span>
                 <span className="row-size">{humanBytes(i.free)}</span>
+                {i.removeTarget && (
+                  <button
+                    type="button"
+                    className="row-remove"
+                    disabled={!!busy}
+                    onClick={() => setRemovePrompt({ item: i, input: "" })}
+                  >
+                    {ui.removeWorktree}
+                  </button>
+                )}
               </div>
               <Bar value={i.free} max={readyMax} />
             </div>
@@ -785,7 +854,15 @@ export default function App() {
       {!scanning && needsYou.length > 0 && (
         <section>
           <h2>{ui.needsAttention} <em>{needsYou.length}</em></h2>
-          {needsYou.map((i) => <Row key={i.key} item={i} language={language} />)}
+          {needsYou.map((i) => (
+            <Row
+              key={i.key}
+              item={i}
+              language={language}
+              disabled={!!busy}
+              onRemove={(item) => setRemovePrompt({ item, input: "" })}
+            />
+          ))}
         </section>
       )}
 
@@ -796,7 +873,15 @@ export default function App() {
           count={idle.length}
           onToggle={() => setShowIdle(!showIdle)}
         >
-          {idle.map((i) => <Row key={i.key} item={i} language={language} />)}
+          {idle.map((i) => (
+            <Row
+              key={i.key}
+              item={i}
+              language={language}
+              disabled={!!busy}
+              onRemove={(item) => setRemovePrompt({ item, input: "" })}
+            />
+          ))}
         </Collapsible>
       )}
 
@@ -980,6 +1065,60 @@ export default function App() {
               <button className="ghost" onClick={() => setPending(null)}>{ui.cancel}</button>
               <button className="primary" onClick={confirmApply} disabled={!!busy}>
                 {busy ? ui.busy[busy] : ui.confirmReclaim}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {removePrompt?.item.removeTarget && (
+        <div className="sheet" onClick={() => !busy && setRemovePrompt(null)}>
+          <div
+            className="sheet-body"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="remove-worktree-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3 id="remove-worktree-title">
+              {ui.removeTitle(removePrompt.item.branch)}
+            </h3>
+            <p className="sheet-note">{ui.removeRisk}</p>
+            <div className="remove-target">
+              <strong>{removePrompt.item.branch}</strong>
+              <span title={removePrompt.item.fullPath}>{removePrompt.item.fullPath}</span>
+            </div>
+            <label className="confirm-field">
+              <span>{ui.typeToConfirm(removePrompt.item.removeTarget.confirmation)}</span>
+              <input
+                autoFocus
+                value={removePrompt.input}
+                disabled={busy === "removing"}
+                onChange={(event) => setRemovePrompt({
+                  item: removePrompt.item,
+                  input: event.target.value,
+                })}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter"
+                    && removePrompt.input === removePrompt.item.removeTarget?.confirmation
+                    && !busy) {
+                    void confirmForceRemove();
+                  }
+                }}
+              />
+            </label>
+            <p className="sheet-note branch-preserved">{ui.branchPreserved}</p>
+            <div className="sheet-actions">
+              <button className="ghost" onClick={() => setRemovePrompt(null)} disabled={!!busy}>
+                {ui.cancel}
+              </button>
+              <button
+                className="danger"
+                onClick={confirmForceRemove}
+                disabled={!!busy
+                  || removePrompt.input !== removePrompt.item.removeTarget.confirmation}
+              >
+                {busy === "removing" ? ui.busy.removing : ui.confirmRemove}
               </button>
             </div>
           </div>

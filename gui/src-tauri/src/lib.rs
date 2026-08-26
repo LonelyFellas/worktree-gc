@@ -23,7 +23,7 @@ use wtgc::config::ScanConfig;
 use wtgc::fsops::RealFs;
 use wtgc::gates::SystemClock;
 use wtgc::model::ScanReport;
-use wtgc::plan::{plan, Plan, Selection};
+use wtgc::plan::{force_remove, plan, Plan, Selection};
 use wtgc::scan::{scan, Env};
 use wtgc::{discover, forge, git, platform};
 
@@ -82,8 +82,12 @@ async fn scan_repos(
                 format!("The scan task terminated unexpectedly: {e}"),
             )
         })??;
-    let scan_id = store.insert(report.clone(), Instant::now())?;
-    Ok(ScanEnvelope { scan_id, report })
+    let (scan_id, remove_targets) = store.insert(report.clone(), Instant::now())?;
+    Ok(ScanEnvelope {
+        scan_id,
+        report,
+        remove_targets,
+    })
 }
 
 fn run_scan(repos: Vec<String>, offline: bool) -> Result<ScanReport, LocalizedError> {
@@ -287,16 +291,29 @@ struct ScanStore {
 struct StoredScan {
     created_at: Instant,
     report: ScanReport,
+    remove_targets: Vec<RemoveTarget>,
 }
 
 #[derive(Serialize)]
 struct ScanEnvelope {
     scan_id: String,
     report: ScanReport,
+    remove_targets: Vec<RemoveTarget>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct RemoveTarget {
+    id: String,
+    path: PathBuf,
+    confirmation: String,
 }
 
 impl ScanStore {
-    fn insert(&self, report: ScanReport, now: Instant) -> Result<String, LocalizedError> {
+    fn insert(
+        &self,
+        report: ScanReport,
+        now: Instant,
+    ) -> Result<(String, Vec<RemoveTarget>), LocalizedError> {
         let mut reports = self.reports.lock().map_err(|_| {
             LocalizedError::new(
                 "扫描结果存储不可用，请重新启动应用",
@@ -315,14 +332,37 @@ impl ScanStore {
             reports.remove(&oldest);
         }
         let id = format!("scan-{:016x}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let remove_targets = report
+            .repos
+            .iter()
+            .enumerate()
+            .flat_map(|(repo_index, repo)| {
+                let scan_id = &id;
+                repo.worktrees
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, wt)| !wt.is_main)
+                    .map(move |(worktree_index, wt)| RemoveTarget {
+                        id: format!("{scan_id}-remove-{repo_index}-{worktree_index}"),
+                        path: wt.path.clone(),
+                        confirmation: wt.branch.clone().unwrap_or_else(|| {
+                            wt.path
+                                .file_name()
+                                .map(|name| name.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| "DETACHED".into())
+                        }),
+                    })
+            })
+            .collect::<Vec<_>>();
         reports.insert(
             id.clone(),
             StoredScan {
                 created_at: now,
                 report,
+                remove_targets: remove_targets.clone(),
             },
         );
-        Ok(id)
+        Ok((id, remove_targets))
     }
 
     fn get(&self, id: &str, now: Instant) -> Result<ScanReport, LocalizedError> {
@@ -342,6 +382,43 @@ impl ScanStore {
                     "This scan result has expired. Rescan and try again.",
                 )
             })
+    }
+
+    fn removal_target(
+        &self,
+        scan_id: &str,
+        target_id: &str,
+        confirmation: &str,
+        now: Instant,
+    ) -> Result<PathBuf, LocalizedError> {
+        let mut reports = self.reports.lock().map_err(|_| {
+            LocalizedError::new(
+                "扫描结果存储不可用，请重新启动应用",
+                "The scan result store is unavailable. Restart the app and try again.",
+            )
+        })?;
+        Self::discard_expired(&mut reports, now);
+        let target = reports
+            .get(scan_id)
+            .and_then(|stored| {
+                stored
+                    .remove_targets
+                    .iter()
+                    .find(|target| target.id == target_id)
+            })
+            .ok_or_else(|| {
+                LocalizedError::new(
+                    "删除目标已失效，请重新扫描",
+                    "This removal target has expired. Rescan and try again.",
+                )
+            })?;
+        if target.confirmation != confirmation {
+            return Err(LocalizedError::new(
+                "分支名不匹配，未创建删除计划",
+                "The branch name does not match, so no removal plan was created.",
+            ));
+        }
+        Ok(target.path.clone())
     }
 
     fn discard_expired(reports: &mut HashMap<String, StoredScan>, now: Instant) {
@@ -397,6 +474,8 @@ async fn create_plan(
     scan_id: String,
     kind: String,
     include_main: bool,
+    target_id: Option<String>,
+    confirmation: Option<String>,
 ) -> Result<PlanSummary, LocalizedError> {
     if kind != "reclaim" && kind != "remove" {
         return Err(LocalizedError::new(
@@ -404,26 +483,35 @@ async fn create_plan(
             "Unknown reclaim plan type.",
         ));
     }
-    let report = scans.get(&scan_id, Instant::now())?;
+    let now = Instant::now();
+    let report = scans.get(&scan_id, now)?;
 
-    let all = Selection::everything_allowed(&report, include_main);
-    let sel = Selection {
-        reclaim: if kind == "reclaim" {
-            all.reclaim
-        } else {
-            Default::default()
-        },
-        remove: if kind == "remove" {
-            all.remove
-        } else {
-            Default::default()
-        },
-        prune: kind == "remove",
+    let p = if kind == "reclaim" {
+        let all = Selection::everything_allowed(&report, include_main);
+        let sel = Selection {
+            reclaim: all.reclaim,
+            ..Default::default()
+        };
+        plan(&report, &sel)
+    } else {
+        let target_id = target_id.as_deref().ok_or_else(|| {
+            LocalizedError::new(
+                "缺少单项删除目标",
+                "A single worktree removal target is required.",
+            )
+        })?;
+        let confirmation = confirmation.as_deref().ok_or_else(|| {
+            LocalizedError::new(
+                "请输入分支名确认删除",
+                "Enter the branch name to confirm removal.",
+            )
+        })?;
+        let target = scans.removal_target(&scan_id, target_id, confirmation, now)?;
+        force_remove(&report, &target)
     };
-    let p = plan(&report, &sel);
 
-    // id 由内容派生而非随机：同一份计划重复创建不会在 store 里堆积
-    let id = format!("{kind}-{}-{}", p.actions.len(), p.estimated_bytes());
+    // 目标 id 绑定扫描快照，同一扫描的重复确认不会在 store 里堆积。
+    let id = format!("{kind}-{scan_id}-{}", target_id.as_deref().unwrap_or("all"));
     let summary = PlanSummary {
         id: id.clone(),
         items: p
@@ -572,13 +660,55 @@ pub use daily::run_daily_check;
 #[cfg(test)]
 mod tests {
     use super::{render_repos, same_repo_items, LocalizedError, ScanStore, UiLanguage, SCAN_TTL};
+    use std::path::PathBuf;
     use std::time::{Duration, Instant};
-    use wtgc::model::ScanReport;
+    use wtgc::model::{Fingerprint, RepoReport, ScanReport, Verdict, WorktreeReport};
 
     fn empty_report(available_bytes: u64) -> ScanReport {
         ScanReport {
             repos: Vec::new(),
             available_bytes,
+            tools: Vec::new(),
+        }
+    }
+
+    fn removal_report() -> ScanReport {
+        let worktree = |path: &str, branch: &str, is_main: bool| WorktreeReport {
+            path: PathBuf::from(path),
+            branch: Some(branch.into()),
+            head_oid: "abc123".into(),
+            is_main,
+            bytes: 100,
+            caches: Vec::new(),
+            outcomes: Vec::new(),
+            verdict: if is_main {
+                Verdict::Protected {
+                    why: "主工作区"
+                }
+            } else {
+                Verdict::Blocked {
+                    by: vec![wtgc::model::GateId::Dirty],
+                }
+            },
+            fingerprint: Fingerprint {
+                head_oid: "abc123".into(),
+                dirty_count: usize::from(!is_main),
+                busy_pids: Vec::new(),
+                precious_digest: String::new(),
+            },
+        };
+        ScanReport {
+            repos: vec![RepoReport {
+                root: PathBuf::from("/repo"),
+                baseline: None,
+                baseline_error: None,
+                worktrees: vec![
+                    worktree("/repo", "main", true),
+                    worktree("/repo/topic", "topic", false),
+                ],
+                prunable: Vec::new(),
+            }],
+            available_bytes: 0,
             tools: Vec::new(),
         }
     }
@@ -617,7 +747,7 @@ mod tests {
     fn scan_snapshot_is_reusable_within_ttl() {
         let store = ScanStore::default();
         let now = Instant::now();
-        let id = store.insert(empty_report(42), now).expect("保存扫描");
+        let (id, _) = store.insert(empty_report(42), now).expect("保存扫描");
 
         let report = store.get(&id, now + SCAN_TTL).expect("TTL 边界内仍可使用");
 
@@ -628,12 +758,42 @@ mod tests {
     fn expired_scan_snapshot_cannot_create_a_plan() {
         let store = ScanStore::default();
         let now = Instant::now();
-        let id = store.insert(empty_report(42), now).expect("保存扫描");
+        let (id, _) = store.insert(empty_report(42), now).expect("保存扫描");
 
         let error = store
             .get(&id, now + SCAN_TTL + Duration::from_millis(1))
             .expect_err("过期扫描必须拒绝");
 
         assert_eq!(error.text(UiLanguage::Zh), "扫描结果已失效，请重新扫描");
+    }
+
+    #[test]
+    fn scan_snapshot_only_issues_removal_targets_for_linked_worktrees() {
+        let store = ScanStore::default();
+        let now = Instant::now();
+        let (scan_id, targets) = store.insert(removal_report(), now).expect("保存扫描");
+
+        assert_eq!(targets.len(), 1, "主工作区不得获得删除目标 id");
+        assert_eq!(targets[0].path, PathBuf::from("/repo/topic"));
+        assert_eq!(targets[0].confirmation, "topic");
+        assert_eq!(
+            store
+                .removal_target(&scan_id, &targets[0].id, "topic", now)
+                .expect("分支名匹配"),
+            PathBuf::from("/repo/topic")
+        );
+    }
+
+    #[test]
+    fn removal_target_rejects_a_mismatched_branch_confirmation() {
+        let store = ScanStore::default();
+        let now = Instant::now();
+        let (scan_id, targets) = store.insert(removal_report(), now).expect("保存扫描");
+
+        let error = store
+            .removal_target(&scan_id, &targets[0].id, "other", now)
+            .expect_err("错误分支名不得创建删除计划");
+
+        assert_eq!(error.text(UiLanguage::Zh), "分支名不匹配，未创建删除计划");
     }
 }

@@ -2,12 +2,11 @@
 //!
 //! 四条不可让步的规矩：
 //!
-//! 1. **执行前重算指纹**。扫描到执行之间可能过了几十秒（CLI）到几分钟（GUI），
-//!    足够一个 agent 重新开工。指纹对不上就跳过并上报，不猜（D14）。
-//! 2. **删除 worktree 一律 `git worktree remove` 且不带 `--force`**，
-//!    失败就是失败，**任何情况下不得退化成 `rm -rf`**。git 自己的校验
-//!    （submodule、损坏的 .git）是最后一层保险，绕过它等于亲手拆掉（D15）。
-//! 3. **删除路径必须 canonicalize 后仍在预期的根之下**。符号链接、`..`、
+//! 1. **执行前重算指纹**。自动放行路径重跑安全门禁；人工强制删除路径至少重查
+//!    repo/worktree/branch/HEAD 身份，防止确认后目标被替换（D14）。
+//! 2. 自动删除不带 `--force`；只有输入分支名确认的单项人工删除才使用它。
+//!    两条路径失败后都**不得退化成 `rm -rf`**。
+//! 3. **缓存删除路径必须 canonicalize 后仍在预期的根之下**。符号链接、`..`、
 //!    竞态换目录都可能让一个看起来安全的相对路径指到别处。
 //! 4. **回收量报实测差值**，不报 du 的估算。APFS 写时复制会让估算系统性偏高，
 //!    数字对不上就会丢掉用户的信任。
@@ -224,6 +223,37 @@ fn run_action(action: &Action, cfg: &ScanConfig, env: &Env, fs: &dyn FsOps) -> O
             }
         }
 
+        Action::ForceRemoveWorktree {
+            repo,
+            worktree,
+            branch,
+            expect,
+            bytes,
+        } => {
+            if let Some(o) = recheck_forced_removal(repo, worktree, branch.as_deref(), expect, env)
+            {
+                return o;
+            }
+            // 人工确认路径允许 git 绕过 dirty 检查，但仍绝不退化成 rm -rf。
+            let args = [
+                "worktree",
+                "remove",
+                "--force",
+                &*worktree.to_string_lossy(),
+            ];
+            match env.git.exec(repo, &args) {
+                Ok(out) if out.code == Some(0) => Outcome::Done {
+                    freed_estimate: *bytes,
+                },
+                Ok(out) => Outcome::Failed(Cause::CommandFailed {
+                    cmd: format!("git worktree remove --force {}", worktree.display()),
+                    code: out.code,
+                    stderr: out.stderr,
+                }),
+                Err(c) => Outcome::Failed(c),
+            }
+        }
+
         Action::PruneAdmin {
             repo,
             confirmed_missing,
@@ -318,6 +348,50 @@ fn recheck_removal(
         .or_else(|| recheck_gate(&LockedGate, &ctx))
 }
 
+/// 人工强制删除不重跑自动门禁，但必须确认路径仍表示用户确认时的同一个 worktree。
+fn recheck_forced_removal(
+    repo: &Path,
+    worktree: &Path,
+    branch: Option<&str>,
+    expect: &crate::model::Fingerprint,
+    env: &Env,
+) -> Option<Outcome> {
+    if worktree == repo {
+        return Some(Outcome::Failed(Cause::Io {
+            path: worktree.to_path_buf(),
+            msg: "主工作区不可删除".into(),
+        }));
+    }
+
+    let listing = match env.git.run_ok(repo, &["worktree", "list", "--porcelain"]) {
+        Ok(out) => out.stdout_utf8(),
+        Err(c) => return Some(Outcome::Failed(c)),
+    };
+    let entries = crate::git::porcelain::parse_worktree_list(&listing);
+    let Some(entry) = entries.iter().find(|entry| entry.path == worktree) else {
+        return Some(Outcome::Stale {
+            what: "目标已不在 Git worktree 列表中".into(),
+        });
+    };
+    if entry.path == repo {
+        return Some(Outcome::Failed(Cause::Io {
+            path: worktree.to_path_buf(),
+            msg: "主工作区不可删除".into(),
+        }));
+    }
+    if entry.head.as_deref() != Some(expect.head_oid.as_str()) {
+        return Some(Outcome::Stale {
+            what: "目标 HEAD 已发生变化".into(),
+        });
+    }
+    if entry.branch.as_deref() != branch {
+        return Some(Outcome::Stale {
+            what: "目标分支已发生变化".into(),
+        });
+    }
+    None
+}
+
 fn recheck_gate<G: Gate>(gate: &G, ctx: &GateCtx<'_>) -> Option<Outcome> {
     match gate.evaluate(ctx) {
         GateStatus::Pass => None,
@@ -358,6 +432,12 @@ fn ensure_within(target: &Path, root: &Path) -> Result<(), Outcome> {
 fn restore_hint(action: &Action) -> Option<String> {
     match action {
         Action::RemoveWorktree {
+            repo,
+            worktree,
+            expect,
+            ..
+        }
+        | Action::ForceRemoveWorktree {
             repo,
             worktree,
             expect,
