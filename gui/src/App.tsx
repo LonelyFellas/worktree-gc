@@ -5,6 +5,7 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -49,6 +50,31 @@ type RepoDragPreview = {
   offsetX: number;
   offsetY: number;
   width: number;
+};
+type RepoContextMenu = { repo: string; left: number; top: number };
+type CacheAdapterKind =
+  | "cargo_sccache" | "gradle_build_cache" | "pnpm_store" | "pub_cache" | "uv_cache";
+type CacheAdapterState = "shared" | "configured" | "available" | "missing_tool";
+type RepoCacheSettings = {
+  sccache_enabled: boolean;
+  gradle_build_cache_enabled: boolean;
+  sccache_dir: string | null;
+  pnpm_store_dir: string | null;
+  pub_cache_dir: string | null;
+  uv_cache_dir: string | null;
+};
+type CachePathSetting =
+  | "sccache_dir" | "pnpm_store_dir" | "pub_cache_dir" | "uv_cache_dir";
+type CacheAdapterStatus = {
+  kind: CacheAdapterKind;
+  state: CacheAdapterState;
+  path: string | null;
+  tool: string | null;
+};
+type RepoCacheProfile = {
+  repo: string;
+  settings: RepoCacheSettings;
+  adapters: CacheAdapterStatus[];
 };
 type UpdateState =
   | { kind: "idle" }
@@ -127,6 +153,16 @@ function repoTargetAt(clientX: number, clientY: number, source: string): RepoDro
   if (!card || !path || path === source) return null;
   const rect = card.getBoundingClientRect();
   return { path, edge: clientY < rect.top + rect.height / 2 ? "before" : "after" };
+}
+
+function cachePathSetting(kind: CacheAdapterKind): CachePathSetting | null {
+  switch (kind) {
+    case "cargo_sccache": return "sccache_dir";
+    case "pnpm_store": return "pnpm_store_dir";
+    case "pub_cache": return "pub_cache_dir";
+    case "uv_cache": return "uv_cache_dir";
+    case "gradle_build_cache": return null;
+  }
 }
 
 /** 一行待办：把 worktree 和它的缓存拍平成「一件可处置的事」。 */
@@ -272,6 +308,11 @@ export default function App() {
   const [repoDropTarget, setRepoDropTarget] = useState<RepoDropTarget | null>(null);
   const [repoOrderBusy, setRepoOrderBusy] = useState(false);
   const [repoDragPreview, setRepoDragPreview] = useState<RepoDragPreview | null>(null);
+  const [repoContextMenu, setRepoContextMenu] = useState<RepoContextMenu | null>(null);
+  const [cacheDialogRepo, setCacheDialogRepo] = useState<string | null>(null);
+  const [cacheProfiles, setCacheProfiles] = useState<RepoCacheProfile[]>([]);
+  const [cacheProfilesLoading, setCacheProfilesLoading] = useState(false);
+  const [cacheSaveBusy, setCacheSaveBusy] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState("…");
   const [updateState, setUpdateState] = useState<UpdateState>({ kind: "idle" });
   const updateResource = useRef<Update | null>(null);
@@ -302,12 +343,84 @@ export default function App() {
     });
   }, [language]);
 
+  useEffect(() => {
+    if (!repoContextMenu && !cacheDialogRepo) return;
+    const close = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setRepoContextMenu(null);
+      setCacheDialogRepo(null);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [repoContextMenu, cacheDialogRepo]);
+
+  useEffect(() => {
+    if (!cacheDialogRepo) return;
+    void refreshSharedCaches();
+  }, [cacheDialogRepo, repos]);
+
   async function refreshDailyCheck() {
     try {
       setDailyCheck(await invoke<DailyCheckStatus>("daily_check_status"));
     } catch (e) {
       setError(`${ui.operationFailed}: ${commandErrorText(e, language)}`);
     }
+  }
+
+  async function refreshSharedCaches() {
+    setCacheProfilesLoading(true);
+    setError(null);
+    try {
+      setCacheProfiles(await invoke<RepoCacheProfile[]>("shared_cache_profiles", { repos }));
+    } catch (e) {
+      setError(`${ui.operationFailed}: ${commandErrorText(e, language)}`);
+    } finally {
+      setCacheProfilesLoading(false);
+    }
+  }
+
+  function updateCacheSetting<K extends keyof RepoCacheSettings>(
+    repo: string,
+    key: K,
+    value: RepoCacheSettings[K],
+  ) {
+    setCacheProfiles((current) => current.map((profile) => profile.repo === repo
+      ? { ...profile, settings: { ...profile.settings, [key]: value } }
+      : profile));
+  }
+
+  async function saveCacheSettings(profile: RepoCacheProfile) {
+    setCacheSaveBusy(profile.repo);
+    setError(null);
+    try {
+      const saved = await invoke<RepoCacheProfile>("save_shared_cache_settings", {
+        repo: profile.repo,
+        settings: profile.settings,
+      });
+      setCacheProfiles((current) => current.map((item) =>
+        item.repo === profile.repo ? saved : item));
+    } catch (e) {
+      setError(`${ui.operationFailed}: ${commandErrorText(e, language)}`);
+    } finally {
+      setCacheSaveBusy(null);
+    }
+  }
+
+  function openRepoMenu(repo: string, event: ReactMouseEvent<HTMLElement>) {
+    event.preventDefault();
+    const width = 180;
+    const height = 84;
+    const margin = 8;
+    setRepoContextMenu({
+      repo,
+      left: Math.max(margin, Math.min(event.clientX, window.innerWidth - width - margin)),
+      top: Math.max(margin, Math.min(event.clientY, window.innerHeight - height - margin)),
+    });
+  }
+
+  function openRepoCache(repo: string) {
+    setRepoContextMenu(null);
+    setCacheDialogRepo(repo);
   }
 
   async function toggleDailyCheck() {
@@ -528,6 +641,8 @@ export default function App() {
   }
 
   async function dropRepo(path: string) {
+    setRepoContextMenu(null);
+    setCacheDialogRepo(null);
     setError(null);
     try {
       setRepos(await invoke<string[]>("remove_repo", { path }));
@@ -623,6 +738,22 @@ export default function App() {
   const readyMax = Math.max(1, ...ready.map((i) => i.free));
   const scanning = busy === "scanning" || !hasScanned;
   const clean = !!report && items.length > 0 && freeNow === 0 && needsYou.length === 0;
+  const cacheAdapterNames: Record<CacheAdapterKind, string> = {
+    cargo_sccache: ui.cacheCargoSccache,
+    gradle_build_cache: ui.cacheGradleBuild,
+    pnpm_store: ui.cachePnpmStore,
+    pub_cache: ui.cachePub,
+    uv_cache: ui.cacheUv,
+  };
+  const cacheStateLabels: Record<CacheAdapterState, string> = {
+    shared: ui.cacheStateShared,
+    configured: ui.cacheStateConfigured,
+    available: ui.cacheStateAvailable,
+    missing_tool: ui.cacheStateMissingTool,
+  };
+  const cacheDialogProfile = cacheDialogRepo
+    ? cacheProfiles.find((profile) => profile.repo === cacheDialogRepo) ?? null
+    : null;
 
   return (
     <div
@@ -979,9 +1110,11 @@ export default function App() {
               ].filter(Boolean).join(" ")}
               data-repo-path={r}
               aria-label={ui.dragToSort(r.split("/").filter(Boolean).slice(-1)[0])}
+              onContextMenu={(event) => openRepoMenu(r, event)}
               onPointerDown={(event) => {
                 if (repoOrderBusy || event.button !== 0
                   || (event.target as Element).closest("button")) return;
+                setRepoContextMenu(null);
                 const rect = event.currentTarget.getBoundingClientRect();
                 event.currentTarget.setPointerCapture(event.pointerId);
                 setDraggedRepo(r);
@@ -1022,7 +1155,6 @@ export default function App() {
                 {/* 名字单独一行且永不截断——路径从中间截断恰好把仓库名切掉，
                     而那正是用户唯一需要认出来的东西 */}
                 <span className="repo-name">{r.split("/").filter(Boolean).slice(-1)[0]}</span>
-                <button className="x" onClick={() => dropRepo(r)} title={ui.stopMonitoring}>×</button>
               </div>
               <div className="repo-meta" title={r}>
                 <span>{parentPath}</span>
@@ -1033,6 +1165,40 @@ export default function App() {
           );
         })}
       </Sidebar>
+
+      {repoContextMenu && (
+        <div
+          className="repo-context-layer"
+          onPointerDown={() => setRepoContextMenu(null)}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <div
+            className="repo-context-menu"
+            role="menu"
+            aria-label={ui.repoActions}
+            style={{ left: repoContextMenu.left, top: repoContextMenu.top }}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              autoFocus
+              onClick={() => openRepoCache(repoContextMenu.repo)}
+            >
+              {ui.sharedCaches}
+            </button>
+            <div className="repo-context-separator" role="separator" />
+            <button
+              type="button"
+              role="menuitem"
+              className="repo-context-danger"
+              onClick={() => void dropRepo(repoContextMenu.repo)}
+            >
+              {ui.stopMonitoring}
+            </button>
+          </div>
+        </div>
+      )}
 
       {repoDragPreview && (
         <div
@@ -1045,6 +1211,122 @@ export default function App() {
         >
           <span className="repo-icon" aria-hidden="true" />
           <span>{repoDragPreview.path.split("/").filter(Boolean).slice(-1)[0]}</span>
+        </div>
+      )}
+
+      {cacheDialogRepo && (
+        <div className="sheet" onClick={() => setCacheDialogRepo(null)}>
+          <div
+            className="sheet-body cache-sheet-body"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="shared-cache-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="cache-dialog-head">
+              <div>
+                <h3 id="shared-cache-title">{ui.sharedCaches}</h3>
+                <p>{ui.sharedCachesDescription}</p>
+              </div>
+              <button
+                type="button"
+                className="cache-dialog-close"
+                aria-label={ui.closeSharedCaches}
+                onClick={() => setCacheDialogRepo(null)}
+              >
+                ×
+              </button>
+            </div>
+            {cacheProfilesLoading ? (
+              <p className="cache-empty">{ui.sharedCachesLoading}</p>
+            ) : cacheDialogProfile ? (
+              <div className="cache-repo-card">
+                <div className="cache-repo-head">
+                  <div className="setting-copy">
+                    <strong>{cacheDialogProfile.repo.split("/").filter(Boolean).slice(-1)[0]}</strong>
+                    <span title={cacheDialogProfile.repo}>
+                      {cacheDialogProfile.repo.replace(home, "~")}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="primary setting-action"
+                    disabled={cacheSaveBusy !== null}
+                    onClick={() => saveCacheSettings(cacheDialogProfile)}
+                  >
+                    {cacheSaveBusy === cacheDialogProfile.repo
+                      ? ui.savingCacheSettings
+                      : ui.saveCacheSettings}
+                  </button>
+                </div>
+                {cacheDialogProfile.adapters.length === 0 ? (
+                  <p className="cache-empty">{ui.noSupportedCaches}</p>
+                ) : cacheDialogProfile.adapters.map((adapter) => {
+                  const pathSetting = cachePathSetting(adapter.kind);
+                  const isSccache = adapter.kind === "cargo_sccache";
+                  const isGradle = adapter.kind === "gradle_build_cache";
+                  const enabled = isSccache
+                    ? cacheDialogProfile.settings.sccache_enabled
+                    : isGradle ? cacheDialogProfile.settings.gradle_build_cache_enabled : null;
+                  return (
+                    <div className="cache-adapter" key={adapter.kind}>
+                      <div className="cache-adapter-head">
+                        <div className="setting-copy">
+                          <strong>{cacheAdapterNames[adapter.kind]}</strong>
+                          <span>{adapter.path ?? ui.cachePathUnavailable}</span>
+                        </div>
+                        <span className={`cache-state ${adapter.state}`}>
+                          {cacheStateLabels[adapter.state]}
+                        </span>
+                        {enabled !== null && (
+                          <button
+                            type="button"
+                            className={`switch${enabled ? " on" : ""}`}
+                            role="switch"
+                            aria-checked={enabled}
+                            aria-label={cacheAdapterNames[adapter.kind]}
+                            onClick={() => updateCacheSetting(
+                              cacheDialogProfile.repo,
+                              isSccache ? "sccache_enabled" : "gradle_build_cache_enabled",
+                              !enabled,
+                            )}
+                          >
+                            <span />
+                          </button>
+                        )}
+                      </div>
+                      {pathSetting && (
+                        <label className="cache-path-field">
+                          <span>{ui.customCachePath}</span>
+                          <input
+                            value={cacheDialogProfile.settings[pathSetting] ?? ""}
+                            placeholder={adapter.path ?? ui.useToolDefault}
+                            autoComplete="off"
+                            spellCheck={false}
+                            onChange={(event) => updateCacheSetting(
+                              cacheDialogProfile.repo,
+                              pathSetting,
+                              event.target.value.trim() || null,
+                            )}
+                          />
+                        </label>
+                      )}
+                      {adapter.state === "missing_tool" && (
+                        <p className="cache-warning">
+                          {isSccache ? ui.installSccache : ui.cacheToolMissing}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="cache-empty">{ui.sharedCachesEmpty}</p>
+            )}
+            <p className="setting-section-note cache-run-note">
+              {ui.sharedCacheRunNote} <code>wtgc run -- &lt;command&gt;</code>
+            </p>
+          </div>
         </div>
       )}
 

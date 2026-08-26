@@ -150,6 +150,27 @@ arguments to strictly limit the scan scope, `--json` for scripts, or `--offline`
 forge lookups. Custom seed directories can be added with `--seed`; pair it with
 `--no-default-seeds` to exclude the built-in locations.
 
+### Share dependency caches across worktrees
+
+In the desktop app, right-click a monitored repository and choose **Worktree shared cache**.
+The app detects Cargo, Gradle, pnpm, Dart/Flutter, and uv projects. Settings are
+stored outside the repository in `~/.config/worktree-gc/shared-cache.json` on macOS/Linux or
+`%APPDATA%\worktree-gc\shared-cache.json` on Windows.
+
+Run builds through the explicit wrapper for those settings to take effect:
+
+```bash
+wtgc --repo /path/to/repository run -- cargo test
+wtgc --repo /path/to/repository run -- pnpm install
+wtgc --repo /path/to/repository run -- flutter build apk
+```
+
+Only each tool's external cache is shared: sccache, Gradle Build Cache, pnpm store,
+`PUB_CACHE`, and uv cache. `target`, `node_modules`, `.dart_tool`, `build`, and `.venv` remain
+worktree-local. `wtgc` does not edit repository or global tool configuration, does not reclaim
+these shared caches, and does not install missing tools. If sccache is enabled but unavailable,
+`wtgc run` stops before starting the command.
+
 ## The problem
 
 AI coding agents (Claude Code, Codex, Cursor …) create a separate git worktree per task,

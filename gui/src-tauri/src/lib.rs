@@ -25,6 +25,7 @@ use wtgc::gates::SystemClock;
 use wtgc::model::ScanReport;
 use wtgc::plan::{force_remove, plan, Plan, Selection};
 use wtgc::scan::{scan, Env};
+use wtgc::shared_cache::{self, RepoCacheProfile, RepoCacheSettings, SharedCacheError};
 use wtgc::{discover, forge, git, platform};
 
 mod daily;
@@ -276,6 +277,113 @@ fn same_repo_items(left: &[String], right: &[String]) -> bool {
     left.sort();
     right.sort();
     left == right
+}
+
+/// 读取每个监控仓库的共享缓存状态。外部工具探测可能起子进程，必须放到
+/// `spawn_blocking`，否则 pnpm/uv 状态查询会卡住 Tauri async runtime。
+#[tauri::command]
+async fn shared_cache_profiles(repos: Vec<String>) -> Result<Vec<RepoCacheProfile>, LocalizedError> {
+    if !same_repo_items(&read_repos(), &repos) {
+        return Err(LocalizedError::new(
+            "仓库列表已变化，请刷新后重试",
+            "The repository list changed. Refresh and try again.",
+        ));
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let config = shared_cache::load().map_err(localize_shared_cache_error)?;
+        repos
+            .into_iter()
+            .map(|repo| {
+                let root = canonical_repo(&repo)?;
+                let settings = config.settings_for(&root);
+                Ok(shared_cache::inspect_repo(&root, settings))
+            })
+            .collect()
+    })
+    .await
+    .map_err(|error| {
+        LocalizedError::new(
+            format!("共享缓存状态检查异常终止：{error}"),
+            format!("The shared-cache check terminated unexpectedly: {error}"),
+        )
+    })?
+}
+
+/// 保存一个仓库的缓存设置。只写 worktree-gc 自己的配置文件；不会写入仓库、
+/// `~/.cargo/config.toml` 或 Gradle/pnpm 全局配置。
+#[tauri::command]
+async fn save_shared_cache_settings(
+    repo: String,
+    settings: RepoCacheSettings,
+) -> Result<RepoCacheProfile, LocalizedError> {
+    if !read_repos().iter().any(|current| current == &repo) {
+        return Err(LocalizedError::new(
+            "该仓库不在当前监控清单里，请刷新后重试",
+            "This repository is no longer monitored. Refresh and try again.",
+        ));
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = canonical_repo(&repo)?;
+        settings
+            .validate(&root)
+            .map_err(localize_shared_cache_error)?;
+        let mut config = shared_cache::load().map_err(localize_shared_cache_error)?;
+        config.set(root.clone(), settings.clone());
+        shared_cache::save(&config).map_err(localize_shared_cache_error)?;
+        Ok(shared_cache::inspect_repo(&root, settings))
+    })
+    .await
+    .map_err(|error| {
+        LocalizedError::new(
+            format!("共享缓存设置保存异常终止：{error}"),
+            format!("Saving shared-cache settings terminated unexpectedly: {error}"),
+        )
+    })?
+}
+
+fn canonical_repo(repo: &str) -> Result<PathBuf, LocalizedError> {
+    PathBuf::from(repo).canonicalize().map_err(|error| {
+        LocalizedError::new(
+            format!("仓库路径不可用：{error}"),
+            format!("The repository path is unavailable: {error}"),
+        )
+    })
+}
+
+fn localize_shared_cache_error(error: SharedCacheError) -> LocalizedError {
+    match error {
+        SharedCacheError::ConfigPathUnavailable => LocalizedError::new(
+            "无法确定共享缓存配置文件位置",
+            "The shared-cache configuration path is unavailable.",
+        ),
+        SharedCacheError::InvalidCachePath { path, reason } => LocalizedError::new(
+            format!("缓存路径 {} 无效：{reason}", path.display()),
+            format!(
+                "The cache path {} is invalid. Use an absolute path outside the repository.",
+                path.display()
+            ),
+        ),
+        SharedCacheError::UnsupportedVersion { version } => LocalizedError::new(
+            format!("不支持共享缓存配置版本 {version}"),
+            format!("Shared-cache configuration version {version} is not supported."),
+        ),
+        SharedCacheError::Read { path, source } => LocalizedError::new(
+            format!("读取 {} 失败：{source}", path.display()),
+            format!("Could not read {}: {source}", path.display()),
+        ),
+        SharedCacheError::Parse { path, source } => LocalizedError::new(
+            format!("解析 {} 失败：{source}", path.display()),
+            format!("Could not parse {}: {source}", path.display()),
+        ),
+        SharedCacheError::Write { path, source } => LocalizedError::new(
+            format!("写入 {} 失败：{source}", path.display()),
+            format!("Could not write {}: {source}", path.display()),
+        ),
+        SharedCacheError::EmptyCommand | SharedCacheError::MissingSccache => LocalizedError::new(
+            error.to_string(),
+            "The shared-cache command configuration is invalid.",
+        ),
+    }
 }
 
 /// GUI 最近一次扫描的短期快照。计划只能引用这里的报告，不能从 WebView 回传路径。
@@ -645,6 +753,8 @@ pub fn run() {
             add_repo,
             remove_repo,
             reorder_repos,
+            shared_cache_profiles,
+            save_shared_cache_settings,
             daily::daily_check_status,
             daily::set_daily_check_enabled,
             daily::set_ui_language,

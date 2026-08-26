@@ -4,8 +4,10 @@
 //! 定时任务会无人值守地跑它，一个默认就删东西的工具没资格进 crontab。
 
 use clap::{Parser, Subcommand};
+use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::PathBuf;
+use std::process::Command;
 use std::time::Duration;
 use wtgc::apply::{ApplyOptions, Outcome, apply};
 use wtgc::config::ScanConfig;
@@ -14,6 +16,7 @@ use wtgc::gates::SystemClock;
 use wtgc::plan::{Selection, plan};
 use wtgc::platform::disk::human_bytes;
 use wtgc::scan::{Env, scan};
+use wtgc::shared_cache;
 use wtgc::{discover, forge, git, platform, report};
 
 #[derive(Parser)]
@@ -76,6 +79,12 @@ enum Cmd {
         #[arg(long)]
         apply: bool,
     },
+    /// 在当前仓库的共享缓存环境里运行命令。不修改仓库或全局配置。
+    Run {
+        /// 要运行的命令及参数。用 `--` 与 wtgc 参数分隔。
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<OsString>,
+    },
 }
 
 fn main() -> std::process::ExitCode {
@@ -85,6 +94,10 @@ fn main() -> std::process::ExitCode {
         eprintln!("找不到 git。这是硬依赖，请先安装或把它加进 PATH。");
         return std::process::ExitCode::from(2);
     };
+
+    if let Some(Cmd::Run { command }) = &cli.cmd {
+        return run_with_shared_cache(&cli.repo, command, git_exe);
+    }
 
     let mut cfg = ScanConfig {
         repos: cli.repo,
@@ -158,6 +171,84 @@ fn main() -> std::process::ExitCode {
         eprintln!("没有发现任何仓库。用 --repo 指定，或确认种子目录下确实有 agent 建的 worktree。");
     }
     std::process::ExitCode::SUCCESS
+}
+
+/// 显式包装一条构建命令。GUI 保存的共享缓存设置只有从这里启动时才生效，
+/// 因此不会污染别的终端、仓库或 IDE 会话。
+fn run_with_shared_cache(
+    repos: &[PathBuf],
+    command: &[OsString],
+    git_exe: PathBuf,
+) -> std::process::ExitCode {
+    let at = match repos {
+        [] => match std::env::current_dir() {
+            Ok(path) => path,
+            Err(error) => {
+                eprintln!("无法确定当前目录：{error}");
+                return std::process::ExitCode::from(2);
+            }
+        },
+        [repo] => repo.clone(),
+        _ => {
+            eprintln!("wtgc run 一次只能指定一个 --repo");
+            return std::process::ExitCode::from(2);
+        }
+    };
+
+    let runner = git::RealGit::new(git_exe, Duration::from_secs(10));
+    let discovered = match discover::expand(&runner, &at) {
+        Ok(repo) => repo,
+        Err(error) => {
+            eprintln!("无法确定 Git 仓库：{error:?}");
+            return std::process::ExitCode::from(2);
+        }
+    };
+    let config = match shared_cache::load() {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("读取共享缓存设置失败：{error}");
+            return std::process::ExitCode::from(2);
+        }
+    };
+    let settings = config.settings_for(&discovered.root);
+    if let Err(error) = settings.validate(&discovered.root) {
+        eprintln!("共享缓存设置无效：{error}");
+        return std::process::ExitCode::from(2);
+    }
+    let spec = match shared_cache::prepare_run(
+        command,
+        &settings,
+        shared_cache::resolved_sccache().as_deref(),
+        std::env::var_os("GRADLE_OPTS").as_deref(),
+    ) {
+        Ok(spec) => spec,
+        Err(error) => {
+            eprintln!("无法准备命令：{error}");
+            return std::process::ExitCode::from(2);
+        }
+    };
+
+    let status = match Command::new(&spec.program)
+        .args(&spec.args)
+        .envs(spec.env)
+        .current_dir(&at)
+        .status()
+    {
+        Ok(status) => status,
+        Err(error) => {
+            eprintln!(
+                "启动 {} 失败：{error}",
+                OsStr::new(&spec.program).to_string_lossy()
+            );
+            return std::process::ExitCode::from(127);
+        }
+    };
+
+    match status.code() {
+        Some(0) => std::process::ExitCode::SUCCESS,
+        Some(code) => std::process::ExitCode::from(code.clamp(1, 255) as u8),
+        None => std::process::ExitCode::from(1),
+    }
 }
 
 /// 执行破坏性动作。`dry_run` 是默认值——一个进 crontab 的工具没资格默认删东西。
