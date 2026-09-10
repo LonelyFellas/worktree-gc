@@ -14,7 +14,7 @@ use wtgc::git::{GitExec, GitRunner, RealGit};
 use wtgc::model::*;
 use wtgc::plan::{Action, Selection, force_remove, plan};
 use wtgc::scan::Env;
-use wtgc::testkit::{FakeProcs, RecordingGit, SpyFs, TempRepo, test_git};
+use wtgc::testkit::{FakeProcs, RecordingGit, SpyFs, TempRepo, git_path_arg, test_git};
 
 fn fingerprint(dirty: usize, pids: Vec<u32>) -> Fingerprint {
     Fingerprint {
@@ -456,7 +456,7 @@ fn confirmed_force_removal_deletes_dirty_worktree_but_keeps_branch_ref() {
     repo.write("a.txt", "x");
     repo.commit("init");
     let worktree = repo.root.join("wt");
-    let worktree_arg = worktree.to_string_lossy().into_owned();
+    let worktree_arg = git_path_arg(&worktree);
     repo.git(&[
         "worktree",
         "add",
@@ -466,7 +466,10 @@ fn confirmed_force_removal_deletes_dirty_worktree_but_keeps_branch_ref() {
         &worktree_arg,
         "HEAD",
     ]);
-    let worktree = worktree.canonicalize().expect("canonicalize worktree");
+    // canonicalize 之后再剥一次 UNC 前缀：这个路径接着要交给真 git 跑 worktree remove
+    let worktree = PathBuf::from(git_path_arg(
+        &worktree.canonicalize().expect("canonicalize worktree"),
+    ));
     let head = repo.head();
     std::fs::write(worktree.join("a.txt"), "changed").expect("制造未提交改动");
 

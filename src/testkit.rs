@@ -91,8 +91,14 @@ impl TempRepo {
     }
 }
 
+/// 把路径转成 git 命令行能吃的形式。
+///
+/// Windows 上 `canonicalize` 返回 `\\?\C:\...` 这种 UNC 扩展形式：Rust 的 API 认它，
+/// git 不认——`worktree add` 会以 "could not create leading directories" 失败（CI 实测）。
+/// 直接调 `repo.git(["worktree", "add", ...])` 的测试必须自己过一道这个函数，
+/// 只有走 `worktree_at` 才是自动处理好的。
 #[cfg(windows)]
-fn git_path_arg(path: &Path) -> String {
+pub fn git_path_arg(path: &Path) -> String {
     let raw = path.to_string_lossy();
     if let Some(rest) = raw.strip_prefix(r"\\?\UNC\") {
         format!(r"\\{rest}")
@@ -104,7 +110,7 @@ fn git_path_arg(path: &Path) -> String {
 }
 
 #[cfg(not(windows))]
-fn git_path_arg(path: &Path) -> String {
+pub fn git_path_arg(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 

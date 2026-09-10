@@ -601,12 +601,30 @@ mod tests {
 
     #[test]
     fn cache_paths_must_be_absolute_external_and_normalized() {
-        let repo = Path::new("/repo/a");
+        // Windows 的绝对路径必须带盘符：`/cache` 在那里 is_absolute() 为假。
+        // 用 Unix 字面量的后果是本该合法的那条栽在「必须使用绝对路径」上，
+        // 而四条拒绝用例又因为同一个理由碰巧变绿——两边都测不到真正的语义（CI 实测）。
+        #[cfg(windows)]
+        let (repo, root, inside, unnormalized, valid_path) = (
+            Path::new(r"C:\repo\a"),
+            r"C:\",
+            r"C:\repo\a\.cache",
+            r"C:\cache\..\other",
+            r"C:\cache\repo-a\uv",
+        );
+        #[cfg(not(windows))]
+        let (repo, root, inside, unnormalized, valid_path) = (
+            Path::new("/repo/a"),
+            "/",
+            "/repo/a/.cache",
+            "/cache/../other",
+            "/cache/repo-a/uv",
+        );
         for path in [
             Path::new("cache"),
-            Path::new("/"),
-            Path::new("/repo/a/.cache"),
-            Path::new("/cache/../other"),
+            Path::new(root),
+            Path::new(inside),
+            Path::new(unnormalized),
         ] {
             let settings = RepoCacheSettings {
                 uv_cache_dir: Some(path.to_path_buf()),
@@ -619,7 +637,7 @@ mod tests {
             );
         }
         let valid = RepoCacheSettings {
-            uv_cache_dir: Some(PathBuf::from("/cache/repo-a/uv")),
+            uv_cache_dir: Some(PathBuf::from(valid_path)),
             ..RepoCacheSettings::default()
         };
         assert!(valid.validate(repo).is_ok());
