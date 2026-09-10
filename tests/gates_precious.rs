@@ -130,6 +130,112 @@ fn disposable_build_cache_alone_passes() {
     );
 }
 
+/// 覆盖率报告是测试产物，重跑测试就有。它不在可弃名单里时，PreciousGate 会一路递归到
+/// MAX_DEPTH 再把深处的子目录整个报成「待人确认」——实测 `coverage/apps/admin/src/components`
+/// 就是这样被拦下的，与里面有没有敏感文件无关。
+#[test]
+fn ignored_coverage_with_node_marker_passes() {
+    let r = TempRepo::new();
+    r.write(".gitignore", "coverage/\n");
+    r.write("package.json", "{\"name\":\"x\"}\n");
+    r.commit("init");
+    let wt = r.worktree("wt", &r.head());
+    // 深过 MAX_DEPTH，确保放行来自可弃名单而不是没走到底
+    std::fs::create_dir_all(wt.join("coverage/apps/admin/src/components")).expect("建 coverage");
+    std::fs::write(
+        wt.join("coverage/apps/admin/src/components/index.html"),
+        "<html>报告</html>",
+    )
+    .expect("写报告");
+
+    let cfg = ScanConfig::default();
+    let git = test_git();
+    let procs = FakeProcs(Ok(vec![]));
+    let clock = FixedClock(SystemTime::now());
+    let forge = NoForge;
+    let head = r.head();
+    let c = ctx(&r, &wt, &head, &cfg, &git, &procs, &clock, &forge);
+
+    assert_eq!(
+        PreciousGate.evaluate(&c),
+        GateStatus::Pass,
+        "有 package.json 佐证的 coverage/ 是可重建的测试产物，不该拦"
+    );
+}
+
+/// coverage 这个名字比 target 更容易撞上真实资料目录，所以 marker 语义对它同样成立。
+#[test]
+fn ignored_coverage_without_marker_is_precious() {
+    let r = TempRepo::new();
+    r.write(".gitignore", "coverage/\n");
+    r.commit("init");
+    let wt = r.worktree("wt", &r.head());
+    std::fs::create_dir_all(wt.join("coverage")).expect("建 coverage");
+    std::fs::write(wt.join("coverage/notes.txt"), "不可重建的资料").expect("写资料");
+
+    let cfg = ScanConfig::default();
+    let git = test_git();
+    let procs = FakeProcs(Ok(vec![]));
+    let clock = FixedClock(SystemTime::now());
+    let forge = NoForge;
+    let head = r.head();
+    let c = ctx(&r, &wt, &head, &cfg, &git, &procs, &clock, &forge);
+
+    assert_blocked_with(&PreciousGate.evaluate(&c), "coverage/notes.txt");
+}
+
+/// TypeScript 增量编译信息散落在各 tsconfig 旁边，不在任何缓存目录里，目录名单管不到它。
+/// 它是编译器一跑就重建的东西，却足以让整个 worktree 卡在这道门上（实测三个 worktree 如此）。
+#[test]
+fn disposable_artifact_file_passes() {
+    let r = TempRepo::new();
+    r.write(".gitignore", "*.tsbuildinfo\n");
+    r.commit("init");
+    let wt = r.worktree("wt", &r.head());
+    std::fs::create_dir_all(wt.join("apps/web")).expect("建目录");
+    // 主工作区没有同路径文件，不修的话会因「worktree 独有」被拦
+    std::fs::write(
+        wt.join("apps/web/tsconfig.tsbuildinfo"),
+        "{\"version\":\"5.9.2\"}",
+    )
+    .expect("写产物");
+
+    let cfg = ScanConfig::default();
+    let git = test_git();
+    let procs = FakeProcs(Ok(vec![]));
+    let clock = FixedClock(SystemTime::now());
+    let forge = NoForge;
+    let head = r.head();
+    let c = ctx(&r, &wt, &head, &cfg, &git, &procs, &clock, &forge);
+
+    assert_eq!(
+        PreciousGate.evaluate(&c),
+        GateStatus::Pass,
+        "编译器产物文件不该占用人的注意力"
+    );
+}
+
+/// 可弃**文件**名单不带 marker 佐证，所以它必须足够窄：后缀像而已的不算。
+#[test]
+fn lookalike_artifact_file_is_still_precious() {
+    let r = TempRepo::new();
+    r.write(".gitignore", "notes/\n");
+    r.commit("init");
+    let wt = r.worktree("wt", &r.head());
+    std::fs::create_dir_all(wt.join("notes")).expect("建目录");
+    std::fs::write(wt.join("notes/tsconfig.tsbuildinfo.bak"), "人写的备份").expect("写资料");
+
+    let cfg = ScanConfig::default();
+    let git = test_git();
+    let procs = FakeProcs(Ok(vec![]));
+    let clock = FixedClock(SystemTime::now());
+    let forge = NoForge;
+    let head = r.head();
+    let c = ctx(&r, &wt, &head, &cfg, &git, &procs, &clock, &forge);
+
+    assert_blocked_with(&PreciousGate.evaluate(&c), "notes/tsconfig.tsbuildinfo.bak");
+}
+
 /// 可弃目录也必须有生态 marker；否则 PreciousGate 会把同名资料目录整个跳过。
 #[test]
 fn ignored_target_without_marker_is_precious() {

@@ -130,6 +130,12 @@ fn inspect(
         return Ok(());
     }
 
+    // 编译器自己会重建的产物文件，不值得占用人的注意力。刻意放在 always_precious 之后：
+    // 两份名单万一有交集，以「拦下」为准。
+    if is_disposable_file(ctx, rel) {
+        return Ok(());
+    }
+
     let mirror = ctx.repo.join(rel);
     match std::fs::symlink_metadata(&mirror) {
         // 主工作区没有同路径文件 → 这一份是 worktree 独有的
@@ -167,6 +173,21 @@ fn is_disposable(ctx: &GateCtx<'_>, rel: &Path) -> bool {
         None => false,
         Some(_) => false,
     }
+}
+
+/// 已知可重建的产物文件。不像可弃目录那样要 marker 佐证——`*.tsbuildinfo` 这类
+/// 编译器专有格式不会是人手写的资料，再要一层佐证只是给自己找麻烦。
+fn is_disposable_file(ctx: &GateCtx<'_>, rel: &Path) -> bool {
+    let full = rel.to_string_lossy();
+    let name = match full.rsplit('/').next() {
+        Some(n) => n,
+        None => full.as_ref(),
+    };
+    ctx.cfg
+        .precious
+        .disposable_files
+        .iter()
+        .any(|p| glob_match(p, name))
 }
 
 fn is_always_precious(ctx: &GateCtx<'_>, rel: &Path) -> bool {

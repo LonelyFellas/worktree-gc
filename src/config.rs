@@ -34,6 +34,7 @@ impl CacheRule {
             CacheRule::new("dist", "node", &["package.json"]),
             CacheRule::new(".next", "node", &["package.json"]),
             CacheRule::new(".turbo", "node", &["package.json"]),
+            CacheRule::new("coverage", "node", &["package.json"]),
             CacheRule::new(".venv", "python", &["pyproject.toml"]),
             CacheRule::new("__pycache__", "python", &[]),
             CacheRule::new(".gradle", "jvm", &["build.gradle", "build.gradle.kts"]),
@@ -62,6 +63,10 @@ impl CacheRule {
 pub struct PreciousPolicy {
     /// 确定可弃的目录名（构建产物）。除此之外的忽略内容都要人看一眼。
     pub disposable_dirs: Vec<String>,
+    /// 确定可弃的产物**文件**（glob）。与目录不同，这里不要求生态 marker——
+    /// 只收编译器专有格式，名字不可能撞上人手写的资料。拿不准的一律别往这里加：
+    /// 每加一条就少一次人的过目。
+    pub disposable_files: Vec<String>,
     /// 即便与主仓内容相同也要拦下的模式（额外保险）。
     pub always_precious: Vec<String>,
 }
@@ -70,6 +75,9 @@ impl Default for PreciousPolicy {
     fn default() -> Self {
         Self {
             disposable_dirs: CacheRule::defaults().into_iter().map(|r| r.dir).collect(),
+            // TypeScript 增量编译信息。它散落在各 tsconfig 旁边而不是某个缓存目录里，
+            // 所以目录名单管不到它，却足以让整个 worktree 卡在这道门上。
+            disposable_files: vec!["*.tsbuildinfo".into()],
             always_precious: vec![
                 "*.tfstate".into(),
                 "*.jks".into(),
